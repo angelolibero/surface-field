@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@font-face { font-family: Figtree; font-style: normal; font-weight: 400 700; font-display: swap; src: url("./fonts/figtree-8330490a.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("./fonts/PlusJakartaSans-Medium.ttf") format("truetype"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("./fonts/PlusJakartaSans-Bold.ttf") format("truetype"); }
+
+/* The field tint stays separate so the demo can show the package's own accent. */
+:root {
+  --radius: 0.875rem;
+  --radius-control-sm: 12px;
+  --radius-card: 16px;
+  --background: oklch(0.971 0 0);
+  --foreground: oklch(0.22 0 0);
+  --card: oklch(0.998 0 0);
+  --sidebar: oklch(0.984 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.999 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.24 0 0);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.955 0 0);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.955 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.6 0.22 25);
+  --border: oklch(0.905 0 0);
+  --input: oklch(0.9 0 0);
+  --ring: oklch(0.24 0 0);
+  --hairline: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --thumb-ring: var(--card);
+  --thumb-shadow: 0 1px 2px oklch(0 0 0 / 28%);
+  --track-fill: color-mix(in oklab, var(--muted) 92%, var(--foreground) 8%);
+  --surface-field-tint: oklch(0.68 0.17 255);
+}
+
+.dark {
+  --background: oklch(0.195 0 0);
+  --foreground: oklch(0.955 0 0);
+  --card: oklch(0.245 0 0);
+  --sidebar: oklch(0.245 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.262 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.97 0 0);
+  --primary-foreground: oklch(0.22 0 0);
+  --secondary: oklch(0.275 0 0);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.275 0 0);
+  --muted-foreground: oklch(0.71 0 0);
+  --accent: oklch(0.305 0 0);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.7 0.19 23);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.97 0 0);
+  --hairline: oklch(1 0 0 / 0.09);
+  --thumb-ring: var(--foreground);
+  --thumb-shadow: 0 1px 2px oklch(0 0 0 / 45%);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+* { border-color: var(--border); }
+html { font-family: Figtree, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--background); color: var(--foreground); }
+button, input { font: inherit; }
+
+.app-shell { position: relative; height: 100svh; min-height: 560px; overflow: hidden; }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark { position: relative; width: 38px; height: 38px; flex: none; overflow: hidden; border: 1px solid var(--hairline); border-radius: 10px; background: var(--card); box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 5%, transparent); pointer-events: none; }
+.brand-copy { flex: 1; min-width: 0; }
+.sidebar-brand strong { display: block; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.035em; }
+.sidebar-brand small { display: block; color: var(--muted-foreground); font-size: 11px; margin-top: 1px; }
+.sidebar-brand .theme-button { flex: none; }
+.mobile-controls-button { display: none; }
+.app-body { height: 100%; min-height: 0; }
+.control-sidebar { position: absolute; z-index: 10; left: 18px; top: 18px; bottom: 18px; width: 306px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 20px; background: color-mix(in oklab, var(--sidebar) 96%, transparent); box-shadow: 0 20px 55px color-mix(in oklab, var(--foreground) 12%, transparent), 0 2px 10px color-mix(in oklab, var(--foreground) 5%, transparent); scrollbar-color: var(--border) transparent; scrollbar-width: thin; backdrop-filter: blur(18px); }
+.controls { padding: 25px 23px 30px; display: flex; flex-direction: column; gap: 21px; }
+.controls-intro p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted-foreground); }
+.preset-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.preset-row [data-slot="select-trigger"] { flex: 1 1 0; width: 0; min-width: 0; }
+.preset-row > button { flex: none; }
+.controls [data-slot="button"], .controls [data-slot="select-trigger"], .mobile-controls-button { border-radius: var(--radius-control-sm); font-size: 12.75px; }
+.controls [data-slot="button"][data-size="sm"] { height: 36px; }
+.controls [data-slot="button"][data-size="icon"] { width: 36px; height: 36px; }
+.controls [data-slot="select-trigger"] { height: 36px; background: var(--card); }
+.controls [data-slot="separator"] { background: var(--hairline); }
+.control-group { display: flex; flex-direction: column; gap: 17px; }
+.group-title { display: flex; align-items: baseline; justify-content: space-between; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: -0.025em; }
+.slider-row { display: flex; flex-direction: column; gap: 11px; }
+.control-line, .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.control-line label, .switch-row label, .color-control label { font-size: 12.75px; font-weight: 500; }
+.control-value { color: var(--muted-foreground); font-family: Figtree, sans-serif; font-size: 11px; font-variant-numeric: tabular-nums; }
+.switch-row p { color: var(--muted-foreground); font-size: 11px; line-height: 1.35; margin: 3px 0 0; }
+.switch-row button { flex: none; }
+.color-control { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.color-picker { position: relative; display: block; width: 32px; height: 32px; flex: none; border-radius: 50%; background: conic-gradient(#ed6565, #f7bd57, #e2dc69, #6dcf9d, #65b9df, #9079db, #ed6565); box-shadow: 0 0 0 1px var(--hairline); }
+.color-picker::after { content: ""; position: absolute; inset: 6px; border: 2px solid var(--card); border-radius: 50%; background: var(--selected-color); box-shadow: 0 1px 3px oklch(0 0 0 / 20%); pointer-events: none; }
+.color-picker input { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.color-picker:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 3px; }
+.workspace { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; }
+.canvas { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); isolation: isolate; touch-action: none; }
+.field-object { position: absolute; z-index: 2; user-select: none; touch-action: none; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-card); box-shadow: 0 12px 32px color-mix(in oklab, var(--foreground) 9%, transparent), 0 2px 5px color-mix(in oklab, var(--foreground) 4%, transparent); transition: box-shadow 160ms ease; }
+.field-object:hover, .field-object:focus-within { box-shadow: 0 17px 42px color-mix(in oklab, var(--foreground) 15%, transparent), 0 2px 7px color-mix(in oklab, var(--foreground) 5%, transparent); }
+.object-handle { position: absolute; z-index: 1; display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted-foreground); padding: 0; touch-action: none; opacity: .72; transition: opacity 120ms ease, color 120ms ease; }
+.field-object:hover .object-handle, .field-object:focus-within .object-handle, .object-handle:hover { opacity: .86; }
+.field-object .object-handle:hover, .field-object .object-handle:focus-visible { color: var(--foreground); opacity: 1; }
+.object-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; border-radius: 7px; }
+.handle-mark { position: relative; display: block; pointer-events: none; }
+.move-handle { top: 0; left: 50%; transform: translateX(-50%); cursor: grab; }
+.move-handle .handle-mark { width: 18px; height: 2px; border-radius: 2px; background: currentColor; }
+.move-handle:active { cursor: grabbing; }
+.resize-handle { bottom: 0; right: 0; cursor: nwse-resize; }
+.resize-handle .handle-mark { width: 16px; height: 16px; }
+.viewport-credit { position: absolute; z-index: 4; right: 24px; bottom: 18px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; text-decoration: none; text-shadow: 0 1px 2px var(--background), 0 -1px 2px var(--background); }
+.viewport-credit:hover { color: var(--foreground); text-decoration: underline; }
+.viewport-credit:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 2px; }
+.mobile-sheet { width: min(330px, 90vw); overflow-y: auto; }
+.mobile-sheet .controls { padding: 16px 2px 28px; }
+
+@media (max-width: 900px) {
+  .control-sidebar { width: 290px; }
+}
+@media (max-width: 768px) {
+  .app-shell { height: 100svh; min-height: 480px; }
+  .mobile-controls-button { position: absolute; z-index: 5; top: 16px; left: 16px; display: inline-flex; background: var(--card); box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 12%, transparent); }
+  .control-sidebar { display: none; }
+  .viewport-credit { right: 16px; bottom: 14px; }
+}
+@media (max-width: 420px) {
+  .sidebar-brand strong { font-size: 13px; }
+}
+
+/* The slider ring stays inside the 22px recessed track. */
+.house-slider { position: relative; display: block; width: 100%; height: 22px; --slider-pull-x: 0px; }
+.house-slider-track { position: absolute; inset: 0; border: 1px solid var(--hairline); border-radius: 999px; background: color-mix(in oklab, var(--muted) 55%, transparent); }
+.house-slider-fill { position: absolute; top: 0; bottom: 0; left: 0; width: calc(11px + var(--slider-progress) * (100% - 22px) + 9px); border-radius: 999px; background: var(--track-fill); pointer-events: none; }
+.house-slider input { position: absolute; top: 0; bottom: 0; left: 2px; width: calc(100% - 4px); height: 100%; margin: 0; padding: 0; border: 0; background: transparent; appearance: none; -webkit-appearance: none; cursor: pointer; touch-action: none; }
+.house-slider input::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+.house-slider input::-moz-range-track { height: 100%; background: transparent; }
+.house-slider input::-webkit-slider-thumb { box-sizing: border-box; width: 18px; height: 18px; margin-top: 2px; border: 3px solid var(--thumb-ring); border-radius: 50%; background: color-mix(in oklab, var(--card) 40%, transparent); box-shadow: var(--thumb-shadow); backdrop-filter: blur(2px) saturate(1.08); -webkit-backdrop-filter: blur(2px) saturate(1.08); appearance: none; -webkit-appearance: none; transform: translateX(var(--slider-pull-x)); transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1); }
+.house-slider input::-moz-range-thumb { box-sizing: border-box; width: 18px; height: 18px; border: 3px solid var(--thumb-ring); border-radius: 50%; background: color-mix(in oklab, var(--card) 40%, transparent); box-shadow: var(--thumb-shadow); backdrop-filter: blur(2px) saturate(1.08); transform: translateX(var(--slider-pull-x)); transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1); }
+.house-slider input:focus-visible { outline: 2px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: 3px; border-radius: 999px; }

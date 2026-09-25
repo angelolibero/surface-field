@@ -1,0 +1,31 @@
+{
+  "name": "surface-field",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Themeable React canvas field of dots, lines and interactive light",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE", "docs"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run",
+    "demo": "npm --prefix demo run dev",
+    "demo:build": "npm run build && npm --prefix demo run build"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.3",
+    "react": "^19.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
