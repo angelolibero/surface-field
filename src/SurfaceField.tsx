@@ -372,6 +372,12 @@ export function SurfaceField({
     let drawnR = new Float64Array(0);
     let drawnX = new Float64Array(0);
     let drawnY = new Float64Array(0);
+    let oldR = new Float64Array(0);
+    let oldX = new Float64Array(0);
+    let oldY = new Float64Array(0);
+    let oldVisible = new Uint8Array(0);
+    let damage = new Uint8Array(0);
+    let damageCells = new Int32Array(0);
     let drawnFabricAlpha = new Float64Array(0);
     let drawnBaseFabricAlpha = new Float64Array(0);
     let fabricDirty = new Int32Array(0);
@@ -1263,6 +1269,10 @@ export function SurfaceField({
             Math.round(7 * (dR - dotBase) / (dotPeak - dotBase))
         ))
       )) fabricDirty[fabricDirtyCount++] = i;
+      oldVisible[i] = was ? 1 : 0;
+      oldR[i] = drawnR[i];
+      oldX[i] = drawnX[i];
+      oldY[i] = drawnY[i];
       drawnStyle[i] = dStyle;
       drawnR[i] = dR;
       drawnX[i] = dX;
@@ -1272,41 +1282,82 @@ export function SurfaceField({
       return true;
     };
 
-    /** Clears cells `c0..c1` of row `r` (inclusive) in one call, in DEVICE
-        pixels under the identity transform , a region that does not land on
-        whole pixels leaves a seam of half-erased antialiasing along its own
-        edge. The caller holds the identity transform. */
-    const clearRun = (r: number, c0: number, c1: number) => {
-      const x0 = Math.floor(c0 * gap * dpr);
-      const y0 = Math.floor(r * gap * dpr);
-      ctx.clearRect(
-        x0,
-        y0,
-        Math.ceil((c1 + 1) * gap * dpr) - x0,
-        Math.ceil((r + 1) * gap * dpr) - y0,
-      );
-    };
-
-    /** Repaints what changed among `n` cells already marked in `dirty`,
-        row-major. A row's neighbouring dirty cells are cleared as one run, so
-        a light crossing the field costs a clear per row and not one per dot. */
+    /** A displaced circle can cross its grid cell at large ripple settings.
+        Clear every tile touched by its OLD and NEW circles, then clip the
+        redraw to that same union. The clip lets neighbouring cached dots be
+        repainted without darkening their pixels outside the cleared area. */
     const repaintDirty = (n: number) => {
       if (!n) return;
+      let count = 0;
+      let minCol = cols, minRow = rows, maxCol = -1, maxRow = -1;
+      const markCircle = (x: number, y: number, radius: number) => {
+        /* One CSS pixel covers the rasteriser's fringe at every capped DPR.
+           The tile itself is only a damage unit, never a glyph clipping box. */
+        const extent = radius + 1;
+        const c0 = Math.max(0, Math.floor((x - extent) / gap));
+        const r0 = Math.max(0, Math.floor((y - extent) / gap));
+        const c1 = Math.min(cols - 1, Math.floor((x + extent) / gap));
+        const r1 = Math.min(rows - 1, Math.floor((y + extent) / gap));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+          const cell = r * cols + c;
+          if (damage[cell]) continue;
+          damage[cell] = 1;
+          damageCells[count++] = cell;
+          minCol = Math.min(minCol, c);
+          minRow = Math.min(minRow, r);
+          maxCol = Math.max(maxCol, c);
+          maxRow = Math.max(maxRow, r);
+        }
+      };
+      for (let k = 0; k < n; k++) {
+        const i = dirty[k];
+        if (oldVisible[i]) markCircle(oldX[i], oldY[i], oldR[i]);
+        if (drawnStyle[i]) markCircle(drawnX[i], drawnY[i], drawnR[i]);
+      }
+      if (!count) return;
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      let start = dirty[0];
-      let prev = start;
-      for (let k = 1; k <= n; k++) {
-        const i = k < n ? dirty[k] : -1;
-        if (i === prev + 1 && i % cols !== 0) {
-          prev = i;
-          continue;
+      const clip = new Path2D();
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol;) {
+          if (!damage[r * cols + c]) { c++; continue; }
+          const start = c++;
+          while (c <= maxCol && damage[r * cols + c]) c++;
+          const x0 = Math.floor(start * gap * dpr);
+          const y0 = Math.floor(r * gap * dpr);
+          const x1 = Math.ceil(c * gap * dpr);
+          const y1 = Math.ceil((r + 1) * gap * dpr);
+          ctx.clearRect(x0, y0, x1 - x0, y1 - y0);
+          clip.rect(x0, y0, x1 - x0, y1 - y0);
         }
-        clearRun((start / cols) | 0, start % cols, prev % cols);
-        start = prev = i;
+      }
+      ctx.clip(clip);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      /* Five crests can each push a dot, and the selected rim and hand can
+         push once more. Search original centres only where a drawn circle
+         could reach this damage; the exact tile test below rejects the rest. */
+      const reach = 6 * Math.abs(ripplePush) + Math.max(0, cursorPush) + dotPeak + 1;
+      const c0 = Math.max(0, Math.floor((minCol * gap - reach) / gap));
+      const r0 = Math.max(0, Math.floor((minRow * gap - reach) / gap));
+      const c1 = Math.min(cols, Math.ceil(((maxCol + 1) * gap + reach) / gap));
+      const r1 = Math.min(rows, Math.ceil(((maxRow + 1) * gap + reach) / gap));
+      lastStyle = "";
+      for (let r = r0; r < r1; r++) for (let c = c0, i = r * cols + c0; c < c1; c++, i++) {
+        if (!drawnStyle[i]) continue;
+        const extent = drawnR[i] + 1;
+        const dc0 = Math.max(0, Math.floor((drawnX[i] - extent) / gap));
+        const dr0 = Math.max(0, Math.floor((drawnY[i] - extent) / gap));
+        const dc1 = Math.min(cols - 1, Math.floor((drawnX[i] + extent) / gap));
+        const dr1 = Math.min(rows - 1, Math.floor((drawnY[i] + extent) / gap));
+        let intersects = false;
+        for (let dr = dr0; dr <= dr1 && !intersects; dr++) for (let dc = dc0; dc <= dc1; dc++) {
+          if (damage[dr * cols + dc]) { intersects = true; break; }
+        }
+        if (intersects) drawCell(i);
       }
       ctx.restore();
-      for (let k = 0; k < n; k++) drawCell(dirty[k]);
+      lastStyle = "";
+      for (let k = 0; k < count; k++) damage[damageCells[k]] = 0;
     };
 
     /* Links live on their own canvas. A dot's cleared cell cannot eat a link,
@@ -1762,6 +1813,12 @@ export function SurfaceField({
         drawnR = new Float64Array(n);
         drawnX = new Float64Array(n);
         drawnY = new Float64Array(n);
+        oldR = new Float64Array(n);
+        oldX = new Float64Array(n);
+        oldY = new Float64Array(n);
+        oldVisible = new Uint8Array(n);
+        damage = new Uint8Array(n);
+        damageCells = new Int32Array(n);
         drawnFabricAlpha = new Float64Array(n);
         drawnBaseFabricAlpha = new Float64Array(n);
         fabricDirty = new Int32Array(n);
