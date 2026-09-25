@@ -7,4 +7,5 @@ export type {
   SurfaceFieldPreview,
   SurfaceFieldRect,
   SurfaceFieldScene,
+  SurfaceFieldViewport,
 } from "./controller.js";

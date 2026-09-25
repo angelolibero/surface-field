@@ -50,3 +50,35 @@ describe("SurfaceField controller lifecycle", () => {
     expect(() => subscribeSurfaceField(controller, vi.fn())).not.toThrow();
   });
 });
+
+describe("SurfaceField controller viewport", () => {
+  it("retains the latest viewport and replays it after the scene on attach", () => {
+    const controller = createSurfaceFieldController();
+    controller.setScene(scene);
+    controller.setViewport({ x: 1, y: 2, zoom: 0.5 });
+    controller.setViewport({ x: 10, y: -20, zoom: 2 });
+    const listener = vi.fn();
+    subscribeSurfaceField(controller, listener);
+    expect(listener.mock.calls).toEqual([
+      [{ kind: "scene", value: scene }],
+      [{ kind: "viewport", value: { x: 10, y: -20, zoom: 2 } }],
+    ]);
+  });
+
+  it("sends a live viewport without replaying the scene, and copies the host's object", () => {
+    const controller = createSurfaceFieldController();
+    const listener = vi.fn();
+    subscribeSurfaceField(controller, listener);
+    listener.mockClear();
+    const camera = { x: 5, y: 6, zoom: 1.5 };
+    controller.setViewport(camera);
+    camera.x = 999;
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ kind: "viewport", value: { x: 5, y: 6, zoom: 1.5 } });
+    const late = vi.fn();
+    listener.mockClear();
+    const other = createSurfaceFieldController();
+    subscribeSurfaceField(other, late);
+    expect(late).toHaveBeenCalledTimes(1);
+  });
+});

@@ -13,20 +13,28 @@ Supply finite, positive `gap` and `focusRadius` values, and a host box with nonz
 | Prop | Default | Meaning |
 | --- | ---: | --- |
 | `gap` | `22` | Dot spacing in CSS px |
-| `focusRadius` | `260` | Spotlight reach in CSS px |
+| `focusRadius` | `250` | Spotlight reach in CSS px |
 | `lineRadius` | `focusRadius * 0.25` | Connected line reach in CSS px |
 | `baseOpacity`, `maxOpacity` | `0.05`, `0.26` | Ambient and focal dot opacity |
 | `tint` | `0.22` | Accent blend at the focal center; zero disables it |
 | `tintVar` | `--surface-field-tint` | CSS property read on the document root for the accent |
 | `tintHueVar`, `tintHue` | unset, `293` | Optional inherited angle property and base hue; overrides `tintVar` |
 | `rippleSpeed`, `rippleWidth` | `0.6`, `38` | Ring speed in px/ms and crest width in px |
+| `surfacePadding` | `0` | Signed CSS px adjustment to the fade outside scene and carried surface rectangles; effective fade width is `max(0, abs(rippleWidth) + surfacePadding)` |
 | `rippleBoost`, `rippleGrow`, `ripplePush` | `0.14`, `0.3`, `6` | Ring brightness, dot growth and displacement |
 | `cursorPush`, `cursorPushRadius` | `0`, `110` | Local pointer displacement in CSS px |
 | `connected` | `false` | Draw the line fabric on a second canvas |
 | `breathe`, `breatheRate` | `1`, `1` | Share of breathing dots and their speed multiplier |
 | `still`, `wander` | `false`, `true` | Disable the moving light or its autonomous drift |
+| `viewport` | `{ x: 0, y: 0, zoom: 1 }` | Host camera for the dot grid, React Flow semantics; see below |
 
 `ripple={{ x, y, at }}` requests one ring for each new `at`. `x` and `y` are CSS pixels relative to the field's own box. `null` disables programmatic rings. `still` keeps the field at one focal position but can still breathe; reduced motion stops both light and breath.
+
+`surfacePadding` changes the empty fade outside each surface without changing ripple width or displacement. At `0`, the existing fade is unchanged. Positive values move fully visible dots and lines farther from a surface; negative values bring them closer. The rectangle interior and boundary stay empty at every value. It applies to scene rectangles and temporary carried footprints, not to the outer canvas edge. Supply a finite value; the demo exposes -32 to 64 px.
+
+`viewport={{ x, y, zoom }}` makes the dot and line grid a floor below the host's graph. React Flow's transform draws a world point `(wx, wy)` at `(wx * zoom + x, wy * zoom + y)` CSS px from the field's root. The grid pans 1:1 with that camera: a camera move of `d` screen px moves every dot by `d`. It scales less than the graph, by `s = clamp(zoom ^ 0.4, 0.7, 1.6)`, so its spacing is `gap * s`: 15.4 to 35.2 px at the default gap. A zoom scales the grid about the screen point that the camera kept fixed (a wheel or pinch keeps the pointer fixed). When that point is outside the field, the grid scales about the last pointer position, and without one it scales about the centre. The grid is carried from one camera to the next, not recomputed from the world origin, so it never slides or jumps when zoom changes. Every zoom draws the same dots, the same connected lines and the same opacity. Each zoom also sends a soft ring out from its anchor, at 0.4 of a press ring's strength, at most one every 250 ms, and each ring fades over 1 s. `still` and reduced motion send no ring. Dot radius, the cursor light, rings, scene rectangles, footprints and previews all stay in screen space. Non-finite values fall back to `0` and `1`; zoom is clamped to `[0.001, 1000]`. A camera change never re-renders React work and never restarts the field: the latest value is applied once, on the next animation frame, as one full canvas repaint.
+
+When `connected` is enabled, each line uses tangents from its neighboring displaced grid dots to curve through its exact endpoint dots. A flat field retains straight lines.
 
 The component reads dot color from inherited CSS `color`. After changing inline color or an ancestor's CSS theme, call `controller.refreshTheme()` to repaint, unless the change is to the document root's class, which is observed automatically. An initial color is read at mount without a controller.
 
@@ -40,5 +48,6 @@ Create a controller once for each field instance and pass it as `controller`. It
 | `setFootprint({ pointerId, rects, ids?, initial?, suppressRipple? })` | Rectangles are viewport CSS pixels. `initial: true` reuses the press capture box. `suppressRipple` removes the held ring when another gesture owns that press. `ids` identifies carried scene objects. |
 | `setPreview({ rect, committed? })` | The rectangle is viewport CSS pixels. `null` ends the preview; `committed` lets its light fade after commitment. |
 | `refreshTheme()` | Rereads inherited color and accent, then repaints even if the motion loop is asleep. |
+| `setViewport({ x, y, zoom })` | Same meaning as the `viewport` prop. Retained like the scene and replayed on attachment. After the first call the controller owns the camera and the prop is ignored for that field. Calls within one frame coalesce into one repaint. |
 
 The controller and field do not inspect a host's object model. Invalid or empty rectangles are ignored by the renderer. Keep an interaction root and its scene root mounted while sending updates.

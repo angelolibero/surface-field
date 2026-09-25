@@ -61,6 +61,10 @@ controller.setScene({
 
 Create one controller per mounted field. Keep its identity stable across renders, for example with `useMemo(createSurfaceFieldController, [])`. The controller updates geometry without a React render. See the [API](docs/API.md), [architecture](docs/ARCHITECTURE.md), and [integration guide](docs/INTEGRATION.md).
 
+React Flow: use the field as the flow's background with [`examples/react-flow`](examples/react-flow/), which forwards the camera and node boxes to the controller.
+
+Use `surfacePadding` to adjust the fade around scene and carried surfaces in CSS pixels. Its default `0` preserves the existing spacing; positive values widen the empty band and negative values narrow it. The surface interior stays clear.
+
 ## Develop
 
 ```bash

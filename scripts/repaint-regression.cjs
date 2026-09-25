@@ -4,8 +4,10 @@
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const output = process.env.FIELD_REPAINT_IMAGE;
-const push = 16;
+const push = Number(process.env.FIELD_REPAINT_PUSH ?? 16);
+const padding = process.env.FIELD_REPAINT_PADDING;
 app.whenReady().then(async () => {
+  if (!Number.isFinite(push) || push < 0 || push > 16) throw new Error('FIELD_REPAINT_PUSH must be between 0 and 16');
   const win = new BrowserWindow({ width: 1280, height: 800, show: false, webPreferences: { backgroundThrottling: false } });
   await win.loadURL(process.env.FIELD_REPAINT_URL || 'http://127.0.0.1:5173/surface-field/');
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -15,6 +17,11 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`(()=>{let e=document.querySelector('input[aria-label="Ripple displacement"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'${push}');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   } else throw new Error('Demo slider missing');
   await win.webContents.executeJavaScript(`(()=>{let e=document.querySelector('input[aria-label="Brightness"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'48');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  if (padding !== undefined) {
+    const value = Number(padding);
+    if (!Number.isFinite(value) || value < -32 || value > 64) throw new Error('FIELD_REPAINT_PADDING must be between -32 and 64');
+    await win.webContents.executeJavaScript(`(()=>{let e=document.querySelector('input[aria-label="Surface spacing"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'${value}');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  }
   await new Promise(resolve => setTimeout(resolve, 350));
   await win.webContents.executeJavaScript(`(()=>{window.__rafDurations=[];let old=requestAnimationFrame.bind(window);window.requestAnimationFrame=cb=>old(t=>{let start=performance.now();try{return cb(t)}finally{window.__rafDurations.push(performance.now()-start)}})})()`);
   const handle = await win.webContents.executeJavaScript(`(()=>{let r=document.querySelector('.field-note .move-handle').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
@@ -28,8 +35,9 @@ app.whenReady().then(async () => {
   const timing = await win.webContents.executeJavaScript(`(()=>{let a=window.__rafDurations.slice().sort((x,y)=>x-y);return{count:a.length,max:a.at(-1)||0,p95:a[Math.floor(a.length*.95)]||0,mean:a.reduce((s,x)=>s+x,0)/Math.max(1,a.length)}})()`);
   await new Promise(resolve => setTimeout(resolve, 4000));
   const final = await win.webContents.executeJavaScript(`({sliders:[...document.querySelectorAll('input[type=range]')].map(e=>({label:e.getAttribute('aria-label'),value:e.value})), canvases:[...document.querySelectorAll('canvas')].map(e=>{let r=e.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height}})})`);
-  if (final.sliders.find(item => item.label === 'Ripple displacement')?.value !== '16' ||
+  if (final.sliders.find(item => item.label === 'Ripple displacement')?.value !== String(push) ||
       final.sliders.find(item => item.label === 'Brightness')?.value !== '48') throw new Error('Demo settings did not settle');
+  if (padding !== undefined && final.sliders.find(item => item.label === 'Surface spacing')?.value !== padding) throw new Error('Surface spacing did not settle');
   if (output) {
     const image = await win.webContents.capturePage();
     fs.writeFileSync(output, image.toPNG());
@@ -40,7 +48,9 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`document.documentElement.classList.remove('dark')`);
   await new Promise(resolve => setTimeout(resolve, 400));
   const parity = await win.webContents.executeJavaScript(`(()=>{let a=window.__fieldBefore,b=document.querySelectorAll('canvas')[3].getContext('2d').getImageData(0,0,a.width,a.height),changed=0,max=0,total=0;for(let i=0;i<a.data.length;i++){let d=Math.abs(a.data[i]-b.data[i]);if(d){changed++;total+=d;max=Math.max(max,d)}}return{changed,max,total,pixels:a.width*a.height}})()`);
-  console.log(JSON.stringify({parity,timing}));
+  const interior = await win.webContents.executeJavaScript(`(()=>{let node=document.querySelector('.field-note').getBoundingClientRect();return [...document.querySelectorAll('.canvas canvas')].map(canvas=>{let rect=canvas.getBoundingClientRect(),scale=canvas.width/rect.width,ctx=canvas.getContext('2d');let x=Math.ceil((node.left+12-rect.left)*scale),y=Math.ceil((node.top+12-rect.top)*scale),w=Math.floor((node.width-24)*scale),h=Math.floor((node.height-24)*scale),data=ctx.getImageData(x,y,w,h).data,ink=0;for(let i=3;i<data.length;i+=4)if(data[i])ink++;return ink})})()`);
+  if (interior.some(Boolean)) throw new Error(`Surface interior contains field pixels: ${interior}`);
+  console.log(JSON.stringify({parity,timing,interior,padding:padding ?? 'default'}));
   if (parity.max > 80 || parity.total > 5000) throw new Error('Incremental dots differ from a clean redraw');
   app.quit();
 }).catch(error => { console.error(error); app.exit(1); });

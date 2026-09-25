@@ -1,6 +1,7 @@
 
 import * as React from "react";
 import { subscribeSurfaceField, type SurfaceFieldController, type SurfaceFieldFootprint, type SurfaceFieldPreview, type SurfaceFieldScene } from "./controller.js";
+import { advanceLattice, normalizeViewport, pickZoomAnchor, sameLattice, sameViewport, seedLattice, zoomFixedPoint, type SurfaceFieldLattice, type SurfaceFieldViewport } from "./viewport.js";
 
 /**
  * SurfaceField: a decorative grid of dots lit by a soft radial "spotlight" that
@@ -18,7 +19,7 @@ export function SurfaceField({
   className,
   style,
   gap = 22,
-  focusRadius = 260,
+  focusRadius = 250,
   lineRadius = focusRadius * 0.25,
   maxOpacity = 0.26,
   baseOpacity = 0.05,
@@ -28,6 +29,7 @@ export function SurfaceField({
   tintHue = 293,
   rippleSpeed = 0.6,
   rippleWidth = 38,
+  surfacePadding = 0,
   rippleBoost = 0.14,
   rippleGrow = 0.3,
   ripplePush = 6,
@@ -42,6 +44,7 @@ export function SurfaceField({
   breatheRate = 1,
   still = false,
   wander = true,
+  viewport,
 }: {
   className?: string;
   /** For the mask that keeps the band from ending in a straight line. */
@@ -79,6 +82,8 @@ export function SurfaceField({
   rippleSpeed?: number;
   /** Thickness of the ripple's crest in px (the Gaussian band that lights up). */
   rippleWidth?: number;
+  /** Signed CSS px adjustment to the empty fade outside scene and carried surfaces. Zero keeps the existing rippleWidth-sized fade. */
+  surfacePadding?: number;
   /** Max extra opacity a passing crest adds , kept under the ambient peak so the wave whispers. 0 disables the lift. */
   rippleBoost?: number;
   /** Max extra dot radius (px) a passing crest adds , kept under the spotlight's own growth. 0 keeps crest dots their base size. */
@@ -205,6 +210,17 @@ export function SurfaceField({
    * table nobody touches draws nothing at all.
    */
   wander?: boolean;
+  /**
+   * WHERE THE HOST'S CAMERA IS, so the grid is the floor its nodes stand on.
+   * React Flow's own meaning: world (wx, wy) is drawn at (wx * zoom + x,
+   * wy * zoom + y) CSS px from the field root. The GRID pans 1:1 with it and
+   * scales by a compressed `clamp(zoom ^ 0.4, 0.7, 1.6)`, a floor below the
+   * nodes; a zoom sends a soft ring out from where it is anchored. The light,
+   * the rings, the scene and the footprints stay in screen pixels.
+   * `controller.setViewport` is the per-frame path and,
+   * once used, wins over this prop. Default `{ x: 0, y: 0, zoom: 1 }`.
+   */
+  viewport?: SurfaceFieldViewport;
 }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const fabricRef = React.useRef<HTMLCanvasElement>(null);
@@ -216,6 +232,22 @@ export function SurfaceField({
      asked for by the layout has to be able to wake it. The effect that owns the
      loop hangs its `wake` here; nothing else may call it. */
   const wakeRef = React.useRef<(() => void) | null>(null);
+  /* THE CAMERA IS NOT A DEPENDENCY OF THE CANVAS. Re-running the effect below
+     for a pan would tear down the observers, the listeners and the loop sixty
+     times a second. The prop is kept in a ref for the effect's first frame
+     and forwarded to it through `viewportRef` afterwards; declared before
+     that effect so on mount the ref is filled before it is read. */
+  const viewportProp = React.useRef(viewport);
+  /* THE FLOOR OUTLIVES THE CANVAS. It is carried from camera to camera (see
+     `advanceLattice`), so it is not a function of the camera alone: rebuilt
+     from scratch, it would jump every time a prop re-runs the effect below.
+     Kept per `gap`, since a different gap is a different floor. */
+  const floorRef = React.useRef<{ gap: number; lattice: SurfaceFieldLattice; view: SurfaceFieldViewport } | null>(null);
+  const viewportRef = React.useRef<((viewport: SurfaceFieldViewport | undefined) => void) | null>(null);
+  React.useEffect(() => {
+    viewportProp.current = viewport;
+    viewportRef.current?.(viewport);
+  }, [viewport?.x, viewport?.y, viewport?.zoom]);
 
   /**
    * ONE RING PER NEW `at`, AND NEVER ONE PER RENDER.
@@ -357,6 +389,33 @@ export function SurfaceField({
     let rows = 0;
     let cellX = new Float64Array(0);
     let cellY = new Float64Array(0);
+    /* WHERE THE CELLS ARE, which the camera decides (see `viewport.ts`).
+       `step` is the screen distance between drawn dots and `gridX, gridY` the
+       top-left edge of cell (0, 0), in (-step, 0]. Every conversion between a
+       screen coordinate and a cell index goes through these three; at the
+       identity viewport they are `gap, 0, 0` and every formula below reduces
+       to the one it replaced. */
+    const kept = floorRef.current?.gap === gap ? floorRef.current : null;
+    let view = kept ? kept.view : normalizeViewport(viewportProp.current);
+    /* Set by the first controller viewport: from then on the prop is ignored,
+       so a host that drives the camera imperatively is never overruled by a
+       stale prop on a re-render. */
+    let viewFromController = false;
+    let viewDirty = false;
+    /* The camera the floor was last carried to, and whether the next camera
+       starts a new floor instead: true until one exists, so a host's first
+       camera places the floor rather than zooming it (and sending a wave)
+       from the identity it never showed. */
+    let floorView = view;
+    let reseed = !kept;
+    let lattice: SurfaceFieldLattice = kept ? kept.lattice : seedLattice(gap, view);
+    let step = lattice.step;
+    let gridX = lattice.originX;
+    let gridY = lattice.originY;
+    /* Where the hand last was over the field, in field px: where a zoom whose
+       fixed point is off the canvas is anchored instead (see `pickZoomAnchor`). */
+    let hand: { x: number; y: number } | null = null;
+    let lastZoomWave = -Infinity;
     /* The breath, hashed once per cell instead of three hashes per dot per
        frame. `breathPeriod` holds exactly the double `breathDip` used to
        divide by, so the sine sees the same argument to the last bit. */
@@ -366,6 +425,8 @@ export function SurfaceField({
     /* The cells that breathe, as indices, and how many , so `renderBreath`
        can tell a handful of cells from most of the field. */
     let breathIdx = new Int32Array(0);
+    /* The buffer `breathIdx` is a view of, so a relayout does not allocate. */
+    let breathList = new Int32Array(0);
     /* WHAT IS ON THE CANVAS FOR EACH CELL , see `sweep`. `null` is "unknown,
        repaint it", `""` is "nothing drawn there". */
     let drawnStyle: (string | null)[] = [];
@@ -415,10 +476,10 @@ export function SurfaceField({
     const fieldBox = (shape: SelectedField | Footprint): Footprint => {
       const pad = focusRadius + Math.max(dotPeak, Math.abs(ripplePush), Math.abs(rippleWidth)) + 2;
       return {
-        left: snap(shape.left - pad, false, width),
-        top: snap(shape.top - pad, false, height),
-        right: snap(shape.right + pad, true, width),
-        bottom: snap(shape.bottom + pad, true, height),
+        left: snap(shape.left - pad, false, width, gridX),
+        top: snap(shape.top - pad, false, height, gridY),
+        right: snap(shape.right + pad, true, width, gridX),
+        bottom: snap(shape.bottom + pad, true, height, gridY),
       };
     };
     const selectionBoxes = () => {
@@ -526,7 +587,7 @@ export function SurfaceField({
         if (field.weight > 0) lineFields.push(field);
       }
     };
-    const ripples: { x: number; y: number; start: number; held?: boolean; footprints?: Footprint[]; footprintAt?: number; source?: "nodes" | "marquee"; ids?: readonly string[] }[] = [];
+    const ripples: { x: number; y: number; start: number; held?: boolean; gain?: number; life?: number; footprints?: Footprint[]; footprintAt?: number; source?: "nodes" | "marquee"; ids?: readonly string[] }[] = [];
     let preview: { shapes: Footprint[]; weight: number; target: number; holdUntil: number } | null = null;
     let previewTurning = false;
     let lastPreviewFrameAt = performance.now();
@@ -590,6 +651,29 @@ export function SurfaceField({
        suppression. `DRAG_PX` is the slop a steady tap wanders on a trackpad. */
     const DRAG_PX = 4;
     const RIPPLE_RISE_MS = 90;
+    /* ═══ A ZOOM IS ANSWERED BY THE FLOOR, NOT PRESSED INTO IT ═══════════
+       .
+       A zoom sends one of the ordinary rings out from where it is anchored,
+       so the floor visibly takes part in a gesture it otherwise only
+       half-follows (see `parallaxScale`). It is the camera moving, not a hand
+       touching the floor, so it is quieter than a press: 0.4 of a press's
+       lift, glow and push, which at the default settings is a 2.4px shove
+       and a crest that brightens without warming the dots into the accent.
+       .
+       A pinch or a wheel is a stream of camera changes, sixty a second. One
+       ring each would be a solid wall of crests; one every 250ms spaces them
+       150px apart at the default 0.6px/ms, four crest widths, so a long zoom
+       reads as a slow pulse of separate rings. A zoom that lasts under 250ms
+       is one ring.
+       .
+       And a wave fades out over 1s, not over the canvas diagonal as a press
+       does (about 3s on a large screen): 600px at the default speed, which
+       is the neighbourhood of the gesture, and exactly four waves alive at
+       the fastest rate. The ring slots are five, so a steady zoom never has
+       to cut a crest off mid-fade and a press always finds a slot. */
+    const ZOOM_WAVE_GAIN = 0.4;
+    const ZOOM_WAVE_INTERVAL_MS = 250;
+    const ZOOM_WAVE_LIFE_MS = 1000;
     let press: { x: number; y: number; pointerId: number; ring: (typeof ripples)[number] | null } | null = null;
     /* `pointerup` is captured before the board flushes its final queued move.
        Keep that ring for this one task so its last snapped box can still land. */
@@ -1001,7 +1085,9 @@ export function SurfaceField({
     const cursorReach = Math.max(0, cursorPushRadius);
     const cursorReach2 = cursorReach * cursorReach;
     const cursorScale = cursorReach > 0 ? Math.max(0, cursorPush) * 27 / (4 * cursorReach) : 0;
-    const edgeWidth = Math.abs(rippleWidth);
+    /* The edge stays empty ON the surface at every setting. A negative value
+       shortens only the exterior fade; it never paints inside the rectangle. */
+    const edgeWidth = Math.max(0, Math.abs(rippleWidth) + (Number.isFinite(surfacePadding) ? surfacePadding : 0));
     const edgeWidth2 = edgeWidth * edgeWidth;
     /* A ring's age, crest radius and amplitude are identical for every dot
        in a frame. Keep five reusable slots rather than doing that arithmetic
@@ -1046,9 +1132,11 @@ export function SurfaceField({
         /* A carried rectangle starts its release at its OWN edge. The free
            press retains the old circle, whose crest has already risen 90ms. */
         const radius = rp.footprints ? Math.max(0, waveAge - RIPPLE_RISE_MS) * rippleSpeed : waveAge * rippleSpeed;
-        const life = radius / reach;
+        /* A zoom wave fades over its own lifetime rather than the canvas
+           diagonal; see ZOOM_WAVE_LIFE_MS. */
+        const life = rp.life ? waveAge / rp.life : radius / reach;
         if (life >= 1) continue;
-        const amp = (1 - life) * Math.min(1, waveAge / RIPPLE_RISE_MS);
+        const amp = (1 - life) * Math.min(1, waveAge / RIPPLE_RISE_MS) * (rp.gain ?? 1);
         if (amp < 0.002) continue;
         const slot = preparedRipples[preparedCount++];
         slot.x = rp.x;
@@ -1294,10 +1382,10 @@ export function SurfaceField({
         /* One CSS pixel covers the rasteriser's fringe at every capped DPR.
            The tile itself is only a damage unit, never a glyph clipping box. */
         const extent = radius + 1;
-        const c0 = Math.max(0, Math.floor((x - extent) / gap));
-        const r0 = Math.max(0, Math.floor((y - extent) / gap));
-        const c1 = Math.min(cols - 1, Math.floor((x + extent) / gap));
-        const r1 = Math.min(rows - 1, Math.floor((y + extent) / gap));
+        const c0 = Math.max(0, Math.floor((x - extent - gridX) / step));
+        const r0 = Math.max(0, Math.floor((y - extent - gridY) / step));
+        const c1 = Math.min(cols - 1, Math.floor((x + extent - gridX) / step));
+        const r1 = Math.min(rows - 1, Math.floor((y + extent - gridY) / step));
         for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
           const cell = r * cols + c;
           if (damage[cell]) continue;
@@ -1323,10 +1411,10 @@ export function SurfaceField({
           if (!damage[r * cols + c]) { c++; continue; }
           const start = c++;
           while (c <= maxCol && damage[r * cols + c]) c++;
-          const x0 = Math.floor(start * gap * dpr);
-          const y0 = Math.floor(r * gap * dpr);
-          const x1 = Math.ceil(c * gap * dpr);
-          const y1 = Math.ceil((r + 1) * gap * dpr);
+          const x0 = Math.floor((gridX + start * step) * dpr);
+          const y0 = Math.floor((gridY + r * step) * dpr);
+          const x1 = Math.ceil((gridX + c * step) * dpr);
+          const y1 = Math.ceil((gridY + (r + 1) * step) * dpr);
           ctx.clearRect(x0, y0, x1 - x0, y1 - y0);
           clip.rect(x0, y0, x1 - x0, y1 - y0);
         }
@@ -1337,18 +1425,18 @@ export function SurfaceField({
          push once more. Search original centres only where a drawn circle
          could reach this damage; the exact tile test below rejects the rest. */
       const reach = 6 * Math.abs(ripplePush) + Math.max(0, cursorPush) + dotPeak + 1;
-      const c0 = Math.max(0, Math.floor((minCol * gap - reach) / gap));
-      const r0 = Math.max(0, Math.floor((minRow * gap - reach) / gap));
-      const c1 = Math.min(cols, Math.ceil(((maxCol + 1) * gap + reach) / gap));
-      const r1 = Math.min(rows, Math.ceil(((maxRow + 1) * gap + reach) / gap));
+      const c0 = Math.max(0, Math.floor((minCol * step - reach) / step));
+      const r0 = Math.max(0, Math.floor((minRow * step - reach) / step));
+      const c1 = Math.min(cols, Math.ceil(((maxCol + 1) * step + reach) / step));
+      const r1 = Math.min(rows, Math.ceil(((maxRow + 1) * step + reach) / step));
       lastStyle = "";
       for (let r = r0; r < r1; r++) for (let c = c0, i = r * cols + c0; c < c1; c++, i++) {
         if (!drawnStyle[i]) continue;
         const extent = drawnR[i] + 1;
-        const dc0 = Math.max(0, Math.floor((drawnX[i] - extent) / gap));
-        const dr0 = Math.max(0, Math.floor((drawnY[i] - extent) / gap));
-        const dc1 = Math.min(cols - 1, Math.floor((drawnX[i] + extent) / gap));
-        const dr1 = Math.min(rows - 1, Math.floor((drawnY[i] + extent) / gap));
+        const dc0 = Math.max(0, Math.floor((drawnX[i] - extent - gridX) / step));
+        const dr0 = Math.max(0, Math.floor((drawnY[i] - extent - gridY) / step));
+        const dc1 = Math.min(cols - 1, Math.floor((drawnX[i] + extent - gridX) / step));
+        const dr1 = Math.min(rows - 1, Math.floor((drawnY[i] + extent - gridY) / step));
         let intersects = false;
         for (let dr = dr0; dr <= dr1 && !intersects; dr++) for (let dc = dc0; dc <= dc1; dc++) {
           if (damage[dr * cols + dc]) { intersects = true; break; }
@@ -1388,11 +1476,14 @@ export function SurfaceField({
         fabricCtx.clip("evenodd");
       }
       fabricCtx.lineCap = "round";
-      const reach = gap + 5 * Math.abs(ripplePush) + 2;
-      const c0 = Math.max(0, Math.floor((x0 - reach) / gap));
-      const r0 = Math.max(0, Math.floor((y0 - reach) / gap));
-      const c1 = Math.min(cols, Math.ceil((x1 + reach) / gap));
-      const r1 = Math.min(rows, Math.ceil((y1 + reach) / gap));
+      /* Two neighbouring dots determine each edge's tangent. Cover their
+         displacement as well as the edge itself in a clipped repaint. */
+      const bendReach = 6 * Math.abs(ripplePush) + Math.max(0, cursorPush);
+      const reach = 2 * step + 2 * bendReach + 2;
+      const c0 = Math.max(0, Math.floor((x0 - reach - gridX) / step));
+      const r0 = Math.max(0, Math.floor((y0 - reach - gridY) / step));
+      const c1 = Math.min(cols, Math.ceil((x1 + reach - gridX) / step));
+      const r1 = Math.min(rows, Math.ceil((y1 + reach - gridY) / step));
       const clipX0 = left / dpr;
       const clipY0 = top / dpr;
       const clipX1 = right / dpr;
@@ -1403,22 +1494,68 @@ export function SurfaceField({
          hairs into paths, then composite each path once. */
       const paths: (Path2D | undefined)[] = [];
       const pathKeys: number[] = [];
-      const touchesShape = (ax: number, ay: number, bx: number, by: number, shape: Footprint) =>
-        Math.max(ax, bx) >= shape.left - edgeWidth - gap &&
-        Math.min(ax, bx) <= shape.right + edgeWidth + gap &&
-        Math.max(ay, by) >= shape.top - edgeWidth - gap &&
-        Math.min(ay, by) <= shape.bottom + edgeWidth + gap;
+      const touchesShape = (left: number, top: number, right: number, bottom: number, shape: Footprint) =>
+        right >= shape.left - edgeWidth - step &&
+        left <= shape.right + edgeWidth + step &&
+        bottom >= shape.top - edgeWidth - step &&
+        top <= shape.bottom + edgeWidth + step;
+      let pointX = 0, pointY = 0;
+      const curvePoint = (ax: number, ay: number, c1x: number, c1y: number,
+        c2x: number, c2y: number, bx: number, by: number, t: number) => {
+        const u = 1 - t;
+        pointX = u * u * u * ax + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * bx;
+        pointY = u * u * u * ay + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * by;
+      };
+      let tangentX = 0, tangentY = 0;
+      const curveTangent = (ax: number, ay: number, c1x: number, c1y: number,
+        c2x: number, c2y: number, bx: number, by: number, t: number) => {
+        const u = 1 - t;
+        tangentX = 3 * (u * u * (c1x - ax) + 2 * u * t * (c2x - c1x) + t * t * (bx - c2x));
+        tangentY = 3 * (u * u * (c1y - ay) + 2 * u * t * (c2y - c1y) + t * t * (by - c2y));
+      };
       const drawLink = (a: number, b: number) => {
         if (!drawnStyle[a] || !drawnStyle[b]) return;
         const ax = drawnX[a], ay = drawnY[a];
         const bx = drawnX[b], by = drawnY[b];
-        if (Math.max(ax, bx) < clipX0 - 1 || Math.min(ax, bx) > clipX1 + 1 ||
-            Math.max(ay, by) < clipY0 - 1 || Math.min(ay, by) > clipY1 + 1) return;
+        if (Math.max(ax, bx) + step + bendReach < clipX0 - 1 || Math.min(ax, bx) - step - bendReach > clipX1 + 1 ||
+            Math.max(ay, by) + step + bendReach < clipY0 - 1 || Math.min(ay, by) - step - bendReach > clipY1 + 1) return;
         const alpha = Math.sqrt(drawnFabricAlpha[a] * drawnFabricAlpha[b]) * 0.42;
         /* The edge taper can only DIM this link. Reject a subvisible
            alpha before testing rectangles and constructing its path: most
            pairs beyond the 300px line light still have visible dots. */
         if (alpha < 0.002) return;
+        const horizontal = b === a + 1;
+        const before = a - (horizontal ? 1 : cols);
+        const after = b + (horizontal ? 1 : cols);
+        const hasBefore = horizontal ? a % cols > 0 : before >= 0;
+        const hasAfter = horizontal ? b % cols + 1 < cols : after < cols * rows;
+        /* Catmull-Rom tangents use ONLY the grid's already displaced dots.
+           A hidden neighbour cannot steer a visible rim, so its tangent
+           continues the visible edge. This keeps a flat mesh exactly flat. */
+        const lx = hasBefore && drawnStyle[before] ? drawnX[before] : 2 * ax - bx;
+        const ly = hasBefore && drawnStyle[before] ? drawnY[before] : 2 * ay - by;
+        const rx = hasAfter && drawnStyle[after] ? drawnX[after] : 2 * bx - ax;
+        const ry = hasAfter && drawnStyle[after] ? drawnY[after] : 2 * by - ay;
+        let t1x = (bx - lx) * 0.5, t1y = (by - ly) * 0.5;
+        let t2x = (rx - ax) * 0.5, t2y = (ry - ay) * 0.5;
+        const chordX = bx - ax, chordY = by - ay;
+        const maxTangent2 = 2.25 * Math.max(step * step, chordX * chordX + chordY * chordY);
+        const t1Length2 = t1x * t1x + t1y * t1y;
+        const t2Length2 = t2x * t2x + t2y * t2y;
+        if (t1Length2 > maxTangent2) {
+          const scale = Math.sqrt(maxTangent2 / t1Length2);
+          t1x *= scale; t1y *= scale;
+        }
+        if (t2Length2 > maxTangent2) {
+          const scale = Math.sqrt(maxTangent2 / t2Length2);
+          t2x *= scale; t2y *= scale;
+        }
+        const c1x = ax + t1x / 3, c1y = ay + t1y / 3;
+        const c2x = bx - t2x / 3, c2y = by - t2y / 3;
+        const curveLeft = Math.min(ax, bx, c1x, c2x), curveTop = Math.min(ay, by, c1y, c2y);
+        const curveRight = Math.max(ax, bx, c1x, c2x), curveBottom = Math.max(ay, by, c1y, c2y);
+        if (curveRight < clipX0 - 1 || curveLeft > clipX1 + 1 ||
+            curveBottom < clipY0 - 1 || curveTop > clipY1 + 1) return;
         const radius = (drawnR[a] + drawnR[b]) * 0.5;
         const widthStep = Math.round(7 * Math.max(0, Math.min(1, (radius - dotBase) / (dotPeak - dotBase))));
         /* Away from a carried edge the full link is a single hairline. Near
@@ -1426,20 +1563,27 @@ export function SurfaceField({
            bridging its fade with one midpoint sample. */
         let nearShape = false;
         if (focusShapes && focusShapeWeight > 0) for (const shape of focusShapes) {
-          if (touchesShape(ax, ay, bx, by, shape)) { nearShape = true; break; }
+          if (touchesShape(curveLeft, curveTop, curveRight, curveBottom, shape)) { nearShape = true; break; }
         }
-        if (!nearShape) for (const group of candidatesAt((ax + bx) * 0.5, (ay + by) * 0.5)) for (const field of group) {
-          if (sourceWeight(field) > 0 && touchesShape(ax, ay, bx, by, field)) { nearShape = true; break; }
+        curvePoint(ax, ay, c1x, c1y, c2x, c2y, bx, by, 0.5);
+        if (!nearShape) for (const group of candidatesAt(pointX, pointY)) for (const field of group) {
+          if (sourceWeight(field) > 0 && touchesShape(curveLeft, curveTop, curveRight, curveBottom, field)) { nearShape = true; break; }
         }
-        const steps = nearShape ? Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 5)) : 1;
+        const bent = Math.abs(c1x - (2 * ax + bx) / 3) + Math.abs(c1y - (2 * ay + by) / 3) +
+          Math.abs(c2x - (ax + 2 * bx) / 3) + Math.abs(c2y - (ay + 2 * by) / 3) > 0.001;
+        const steps = nearShape ? Math.max(1, Math.ceil((Math.hypot(chordX, chordY) +
+          Math.abs(c1x - (2 * ax + bx) / 3) + Math.abs(c1y - (2 * ay + by) / 3) +
+          Math.abs(c2x - (ax + 2 * bx) / 3) + Math.abs(c2y - (ay + 2 * by) / 3)) / 5)) : 1;
         for (let s = 0; s < steps; s++) {
           const t0 = s / steps;
           const t1 = (s + 1) / steps;
-          const sx = ax + (bx - ax) * t0;
-          const sy = ay + (by - ay) * t0;
-          const ex = ax + (bx - ax) * t1;
-          const ey = ay + (by - ay) * t1;
-          const taper = nearShape ? shapeTaper((sx + ex) * 0.5, (sy + ey) * 0.5) : 1;
+          curvePoint(ax, ay, c1x, c1y, c2x, c2y, bx, by, t0);
+          const sx = pointX, sy = pointY;
+          curvePoint(ax, ay, c1x, c1y, c2x, c2y, bx, by, t1);
+          const ex = pointX, ey = pointY;
+          if (nearShape) curvePoint(ax, ay, c1x, c1y, c2x, c2y, bx, by, (t0 + t1) * 0.5);
+          const sampleX = pointX, sampleY = pointY;
+          const taper = nearShape ? shapeTaper(sampleX, sampleY) : 1;
           const strokeAlpha = alpha * taper;
           if (strokeAlpha < 0.002) continue;
           const alphaByte = Math.max(1, Math.min(255, Math.round(strokeAlpha * 255)));
@@ -1451,7 +1595,13 @@ export function SurfaceField({
             pathKeys.push(key);
           }
           path.moveTo(sx, sy);
-          path.lineTo(ex, ey);
+          if (bent) {
+            const dt = (t1 - t0) / 3;
+            curveTangent(ax, ay, c1x, c1y, c2x, c2y, bx, by, t0);
+            const segmentC1X = sx + dt * tangentX, segmentC1Y = sy + dt * tangentY;
+            curveTangent(ax, ay, c1x, c1y, c2x, c2y, bx, by, t1);
+            path.bezierCurveTo(segmentC1X, segmentC1Y, ex - dt * tangentX, ey - dt * tangentY, ex, ey);
+          } else path.lineTo(ex, ey);
         }
       };
       for (let r = r0; r < r1; r++) {
@@ -1482,7 +1632,7 @@ export function SurfaceField({
         return;
       }
       let x0 = width, y0 = height, x1 = 0, y1 = 0;
-      const pad = gap + 5 * Math.abs(ripplePush) + 2;
+      const pad = 2 * step + 2 * (6 * Math.abs(ripplePush) + Math.max(0, cursorPush)) + 2;
       const include = (left: number, top: number, right: number, bottom: number) => {
         x0 = Math.min(x0, left - pad);
         y0 = Math.min(y0, top - pad);
@@ -1503,7 +1653,7 @@ export function SurfaceField({
             shape.right !== next.right || shape.bottom !== next.bottom;
         });
       if (shapeChanged) {
-        const shapePad = edgeWidth + gap;
+        const shapePad = edgeWidth + step;
         for (let i = 0; i < Math.max(lastFabricShapes.length, focusShapes?.length ?? 0); i++) {
           const before = lastFabricWeight > 0 ? lastFabricShapes[i] : undefined;
           const after = focusShapeWeight > 0 ? focusShapes?.[i] : undefined;
@@ -1530,7 +1680,7 @@ export function SurfaceField({
         for (const { old, next } of changedFields.values()) {
           if (old?.weight === next?.weight && old?.rect.left === next?.rect.left && old?.rect.top === next?.rect.top &&
               old?.rect.right === next?.rect.right && old?.rect.bottom === next?.rect.bottom) continue;
-          const shapePad = edgeWidth + gap + 2;
+          const shapePad = edgeWidth + step + 2;
           const before = old && old.weight > 0 ? old.rect : undefined;
           const after = next && next.weight > 0 ? next.rect : undefined;
           /* Easing changes a scene field's weight every frame without
@@ -1556,10 +1706,13 @@ export function SurfaceField({
         between dots , see `snap`. */
     const sweep = (x0: number, y0: number, x1: number, y1: number) => {
       prepareRipples();
-      const c0 = Math.round(x0 / gap);
-      const r0 = Math.round(y0 / gap);
-      const c1 = Math.min(cols, Math.ceil((Math.min(x1, width) - gap / 2) / gap));
-      const r1 = Math.min(rows, Math.ceil((Math.min(y1, height) - gap / 2) / gap));
+      /* An edge clamped to the canvas is not a midline once the grid is
+         panned; the first column then starts at 0 rather than rounding past
+         a cell whose dot straddles the edge. */
+      const c0 = x0 <= 0 ? 0 : Math.round((x0 - gridX) / step);
+      const r0 = y0 <= 0 ? 0 : Math.round((y0 - gridY) / step);
+      const c1 = Math.min(cols, Math.ceil((Math.min(x1, width) - gridX - step / 2) / step));
+      const r1 = Math.min(rows, Math.ceil((Math.min(y1, height) - gridY - step / 2) / step));
       let n = 0;
       fabricDirtyCount = 0;
       for (let r = r0; r < r1; r++) {
@@ -1602,12 +1755,12 @@ export function SurfaceField({
        half-eaten dots trailing the light, which is exactly what the parity
        harness caught the first time.
        .
-       Dot centres sit at `gap/2 + k·gap`, so the midlines between them are the
-       multiples of `gap`. Snapping every edge to those leaves `gap/2` of
-       daylight , eleven pixels, for a dot 1.6px across , and straddling stops
-       being a case to handle rather than being handled. */
-    const snap = (v: number, up: boolean, max: number) => {
-      const q = (up ? Math.ceil(v / gap) : Math.floor(v / gap)) * gap;
+       Dot centres sit at `grid + step/2 + k·step`, so the midlines between
+       them are `grid + k·step`. Snapping every edge to those leaves `step/2`
+       of daylight , eleven pixels at rest, for a dot 1.6px across , and
+       straddling stops being a case to handle rather than being handled. */
+    const snap = (v: number, up: boolean, max: number, origin: number) => {
+      const q = origin + (up ? Math.ceil((v - origin) / step) : Math.floor((v - origin) / step)) * step;
       return q < 0 ? 0 : q > max ? max : q;
     };
     const paintRegions = (regions: Footprint[]) => {
@@ -1630,8 +1783,8 @@ export function SurfaceField({
       }
     };
     const snappedBox = (left: number, top: number, right: number, bottom: number, pad: number): Footprint => ({
-      left: snap(left - pad, false, width), top: snap(top - pad, false, height),
-      right: snap(right + pad, true, width), bottom: snap(bottom + pad, true, height),
+      left: snap(left - pad, false, width, gridX), top: snap(top - pad, false, height, gridY),
+      right: snap(right + pad, true, width, gridX), bottom: snap(bottom + pad, true, height, gridY),
     });
 
     /** The light's frame. Only the box the light left plus the box it entered
@@ -1652,10 +1805,10 @@ export function SurfaceField({
     const renderMoving = () => {
       prepareRipples();
       const pad = focusRadius + dotPeak + 1;
-      const bx0 = snap(fx - pad, false, width);
-      const by0 = snap(fy - pad, false, height);
-      const bx1 = snap(fx + pad, true, width);
-      const by1 = snap(fy + pad, true, height);
+      const bx0 = snap(fx - pad, false, width, gridX);
+      const by0 = snap(fy - pad, false, height, gridY);
+      const bx1 = snap(fx + pad, true, width, gridX);
+      const by1 = snap(fy + pad, true, height, gridY);
 
       const held = focusShapes?.map(fieldBox) ?? [];
       if (!activeFields.length && !prevSelectionBoxes.length && !prevRippleBoxes.length && !prevHeldBoxes.length && !held.length) {
@@ -1737,7 +1890,7 @@ export function SurfaceField({
     const renderTravelling = () => {
       prepareRipples();
       const cursor = snappedBox(fx, fy, fx, fy, focusRadius + dotPeak + 1);
-      const support = 4 * Math.abs(rippleWidth) + gap + 5 * Math.abs(ripplePush) + dotPeak + 2;
+      const support = 4 * Math.abs(rippleWidth) + step + 5 * Math.abs(ripplePush) + dotPeak + 2;
       const crests: Footprint[] = [];
       for (const rp of ripples) {
         const age = now - rp.start;
@@ -1772,11 +1925,11 @@ export function SurfaceField({
         is nothing on it to compare with; otherwise a grid of the same shape
         keeps what it knows was drawn. */
     const layoutCells = (fresh: boolean) => {
-      const half = gap / 2;
+      const half = step / 2;
       let nc = 0;
       let nr = 0;
-      for (let x = half; x < width; x += gap) nc++;
-      for (let y = half; y < height; y += gap) nr++;
+      for (let x = gridX + half; x < width; x += step) nc++;
+      for (let y = gridY + half; y < height; y += step) nr++;
       const same = nc === cols && nr === rows;
       cols = nc;
       rows = nr;
@@ -1784,31 +1937,48 @@ export function SurfaceField({
       /* ACCUMULATED, NOT MULTIPLIED, because this is how the loops that used
          to walk the grid arrived at each centre , for an integer `gap` the
          two agree, and for any other they now agree with the history. */
-      cellX = new Float64Array(cols);
-      cellY = new Float64Array(rows);
-      for (let c = 0, x = half; c < cols; c++, x += gap) cellX[c] = x;
-      for (let r = 0, y = half; r < rows; r++, y += gap) cellY[r] = y;
-      breathOn = new Uint8Array(n);
-      breathPeriod = new Float64Array(n);
-      breathPhase = new Float64Array(n);
-      const idx: number[] = [];
-      if (breathes) {
-        for (let row = 0; row < rows; row++) {
-          for (let col = 0; col < cols; col++) {
-            if (hash(col, row, 1) >= density) continue;
-            const i = row * cols + col;
-            breathOn[i] = 1;
-            /* `rate` is the caller's whole-field multiplier , see the prop.
-               It divides the period, so 2 is twice as fast and every dot
-               keeps its own spread and its own phase. */
-            breathPeriod[i] = (BREATH_MIN + hash(col, row, 2) * BREATH_SPAN) / rate;
-            breathPhase[i] = hash(col, row, 3);
-            idx.push(i);
-          }
+      if (cellX.length !== cols) cellX = new Float64Array(cols);
+      if (cellY.length !== rows) cellY = new Float64Array(rows);
+      for (let c = 0, x = gridX + half; c < cols; c++, x += step) cellX[c] = x;
+      for (let r = 0, y = gridY + half; r < rows; r++, y += step) cellY[r] = y;
+      /* A PAN RELAYS THE GRID EVERY FRAME, so a grid of the same shape keeps
+         its buffers and is only rewritten: a new set of fourteen arrays per
+         frame would be the garbage this file spent a year taking out. */
+      if (same && breathOn.length === n) {
+        breathOn.fill(0);
+      } else {
+        breathOn = new Uint8Array(n);
+        breathPeriod = new Float64Array(n);
+        breathPhase = new Float64Array(n);
+        breathList = new Int32Array(n);
+      }
+      /* A dot's breath is hashed from its FLOOR index, so the dot you were
+         watching keeps its period and phase while the camera pans and zooms:
+         every camera change maps dots to dots (see `advanceLattice`). At rest
+         the floor index is the cell index, and the field breathes exactly as
+         it always did. */
+      const { firstCol, firstRow } = lattice;
+      let count = 0;
+      for (let row = 0; row < rows; row++) {
+        const worldRow = firstRow + row;
+        for (let col = 0; col < cols; col++) {
+          const i = row * cols + col;
+          if (!breathes) continue;
+          const worldCol = firstCol + col;
+          if (hash(worldCol, worldRow, 1) >= density) continue;
+          breathOn[i] = 1;
+          /* `rate` is the caller's whole-field multiplier , see the prop.
+             It divides the period, so 2 is twice as fast and every dot
+             keeps its own spread and its own phase. */
+          breathPeriod[i] = (BREATH_MIN + hash(worldCol, worldRow, 2) * BREATH_SPAN) / rate;
+          breathPhase[i] = hash(worldCol, worldRow, 3);
+          breathList[count++] = i;
         }
       }
-      breathIdx = Int32Array.from(idx);
-      if (!same || fresh) {
+      breathIdx = breathList.subarray(0, count);
+      if (same && fresh && drawnStyle.length === n) {
+        drawnStyle.fill("");
+      } else if (!same || fresh) {
         drawnStyle = new Array(n).fill(fresh ? "" : null);
         drawnR = new Float64Array(n);
         drawnX = new Float64Array(n);
@@ -1845,6 +2015,61 @@ export function SurfaceField({
        it, and the two thirds of the frames that are skipped are two thirds of
        the cost. */
     const BREATH_FRAME = 45; // ms between breath-only frames
+
+    /* ═══ THE CAMERA MOVED, SO EVERY DOT MOVED ═══════════════════════════════
+       .
+       A pan shifts every cell by the same sub-cell amount and a zoom changes
+       the spacing, so no part of the canvas is still right: this is a full
+       repaint, the same one a resize pays. What keeps it affordable is WHEN
+       it runs. `setViewport` and the prop only record the camera; the frame
+       applies the latest one, so a host that sends five camera updates in one
+       frame (wheel events arrive faster than vsync) pays for one repaint, and
+       React never renders for any of them. A camera update that yields the
+       identical lattice costs one comparison and no paint. */
+    const applyViewport = () => {
+      if (!viewDirty) return false;
+      viewDirty = false;
+      let next: SurfaceFieldLattice;
+      if (reseed) {
+        next = seedLattice(gap, view);
+        reseed = false;
+      } else {
+        const fixed = zoomFixedPoint(floorView, view);
+        const anchor = pickZoomAnchor(fixed, hand, width, height);
+        next = advanceLattice(lattice, gap, floorView, view, anchor);
+        if (fixed) zoomWave(anchor.x, anchor.y);
+      }
+      floorView = view;
+      floorRef.current = { gap, lattice: next, view };
+      if (sameLattice(next, lattice)) return false;
+      lattice = next;
+      step = next.step;
+      gridX = next.originX;
+      gridY = next.originY;
+      layoutCells(true);
+      render();
+      return true;
+    };
+
+    /* One ring from the zoom's anchor, at most every ZOOM_WAVE_INTERVAL_MS.
+       Only where there is a light to carry it: reduced motion and `still`
+       draw no rings at all, and a carrying hand has put the rings down. The
+       ring slots are five (see `preparedRipples`), so a wave makes room by
+       retiring the oldest WAVE, then the oldest free ring, and never a held
+       one: a press under the hand outranks the camera. */
+    const zoomWave = (x: number, y: number) => {
+      if (!animating || carrying) return;
+      const at = now || performance.now();
+      if (at - lastZoomWave < ZOOM_WAVE_INTERVAL_MS) return;
+      if (ripples.length >= 5) {
+        let index = ripples.findIndex(rp => rp.gain !== undefined);
+        if (index < 0) index = ripples.findIndex(rp => !rp.held);
+        if (index < 0) return;
+        ripples.splice(index, 1);
+      }
+      lastZoomWave = at;
+      ripples.push({ x, y, start: at, gain: ZOOM_WAVE_GAIN, life: ZOOM_WAVE_LIFE_MS });
+    };
 
     const renderBreath = () => {
       /* PAST A QUARTER OF THE FIELD IT IS THE WHOLE FIELD. Walking a list of
@@ -1899,6 +2124,9 @@ export function SurfaceField({
       now = time;
       advancePreview(time);
       advanceSelection(time);
+      /* Before the carry check: a host may pan under a carried object, and
+         the grid has to follow even while the light is asleep. */
+      const moved = applyViewport();
       if (carrying) {
         if (owed) {
           sweep(0, 0, width, height);
@@ -1920,7 +2148,7 @@ export function SurfaceField({
           const travelled = rp.footprints
             ? Math.max(0, time - rp.start - RIPPLE_RISE_MS) * rippleSpeed
             : (time - rp.start) * rippleSpeed;
-          if (!rp.held && travelled >= reach) {
+          if (!rp.held && (rp.life ? time - rp.start >= rp.life : travelled >= reach)) {
             ripples.splice(i, 1);
           }
         }
@@ -1985,7 +2213,10 @@ export function SurfaceField({
          and the behaviour this file has always had: the light arrives and the
          loop goes down until a hand or a ring brings it back. */
       const asleep = settled && !breathing;
-      if (ripples.length) {
+      if (moved) {
+        /* `render` already drew this frame everywhere, light and breath. */
+        lastBreath = time;
+      } else if (ripples.length) {
         if (ripples.every(rp => rp.held)) {
           renderHeld();
         } else {
@@ -2076,7 +2307,8 @@ export function SurfaceField({
     const breathFrame = (time: number) => {
       if (!running) return;
       now = time;
-      if (time - lastBreath >= BREATH_FRAME) {
+      if (applyViewport()) lastBreath = time;
+      else if (time - lastBreath >= BREATH_FRAME) {
         renderBreath();
         lastBreath = time;
       }
@@ -2145,6 +2377,7 @@ export function SurfaceField({
       if (pointerInside) {
         tx = e.clientX - rect.left;
         ty = e.clientY - rect.top;
+        hand = { x: tx, y: ty };
       }
       wake();
     };
@@ -2307,6 +2540,16 @@ export function SurfaceField({
       previewTurning = true;
       wake();
     };
+    /* Recorded here, drawn by the next frame; see `applyViewport`. Reduced
+       motion has no frame to pick it up, so it draws at once. */
+    const onViewport = (next: SurfaceFieldViewport | undefined) => {
+      const value = normalizeViewport(next);
+      if (sameViewport(value, view)) return;
+      view = value;
+      viewDirty = true;
+      if (!looping) applyViewport();
+      else wake();
+    };
     const onScene = (scene: SurfaceFieldScene | null) => {
       sceneSnapshot = scene;
       sceneDirty = true;
@@ -2368,8 +2611,15 @@ export function SurfaceField({
       if (signal.kind === "scene") onScene(signal.value);
       else if (signal.kind === "footprint") onFootprint(signal.value);
       else if (signal.kind === "preview") onPreview(signal.value);
-      else recolour();
+      else if (signal.kind === "viewport") {
+        /* The host's first camera PLACES the floor, unless one was kept
+           from before this effect ran; see `reseed`. */
+        if (!viewFromController && !kept) reseed = true;
+        viewFromController = true;
+        onViewport(signal.value);
+      } else recolour();
     }) : null;
+    viewportRef.current = next => { if (!viewFromController) onViewport(next); };
     if (!looping) {
       /* ONE FRAME AND NO SUBSCRIPTIONS, which is now reduced motion alone:
          nothing on this canvas will ever change again, so a loop and three
@@ -2404,12 +2654,15 @@ export function SurfaceField({
         document.addEventListener("animationend", onHueAnimation, true);
         document.addEventListener("animationcancel", onHueAnimation, true);
       }
-      raf = nextFrame();
+      /* A replayed scene or camera above may already have woken the loop;
+         a second request here would run two frame chains side by side. */
+      if (!raf) raf = nextFrame();
     }
 
     return () => {
       running = false;
       wakeRef.current = null;
+      viewportRef.current = null;
       cancelAnimationFrame(raf);
       raf = 0;
       window.clearTimeout(timer);
@@ -2441,6 +2694,7 @@ export function SurfaceField({
     tintHue,
     rippleSpeed,
     rippleWidth,
+    surfacePadding,
     rippleBoost,
     rippleGrow,
     ripplePush,
