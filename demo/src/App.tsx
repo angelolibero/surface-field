@@ -1,7 +1,7 @@
 import * as React from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  CheckmarkCircleIcon, Copy01Icon, Menu01Icon, Moon02Icon,
+  CheckmarkCircleIcon, Copy01Icon, GithubIcon, Menu01Icon, Moon02Icon,
   RotateCcwIcon, Sun02Icon,
 } from "@hugeicons/core-free-icons";
 import { SurfaceField, createSurfaceFieldController } from "surface-field";
@@ -320,6 +320,9 @@ export default function App() {
         </div>
       </main>
     </div>
-    <a className="viewport-credit" href="https://github.com/angelolibero" target="_blank" rel="noopener noreferrer">Made by Angelo Libero</a>
+    <div className="viewport-credit">
+      <a href="https://github.com/angelolibero" target="_blank" rel="noopener noreferrer">Made by Angelo Libero</a>
+      <a href="https://github.com/angelolibero/surface-field" target="_blank" rel="noopener noreferrer" aria-label="Surface Field on GitHub" title="Surface Field on GitHub"><HugeiconsIcon icon={GithubIcon} size={14} /></a>
+    </div>
   </div>;
 }

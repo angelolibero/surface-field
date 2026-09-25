@@ -139,9 +139,11 @@ button, input { font: inherit; }
 .move-handle:active { cursor: grabbing; }
 .resize-handle { bottom: 0; right: 0; cursor: nwse-resize; }
 .resize-handle .handle-mark { width: 16px; height: 16px; }
-.viewport-credit { position: absolute; z-index: 4; right: 24px; bottom: 18px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; text-decoration: none; text-shadow: 0 1px 2px var(--background), 0 -1px 2px var(--background); }
-.viewport-credit:hover { color: var(--foreground); text-decoration: underline; }
-.viewport-credit:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 2px; }
+.viewport-credit { position: absolute; z-index: 4; right: 24px; bottom: 18px; display: flex; align-items: baseline; gap: 7px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; text-shadow: 0 1px 2px var(--background), 0 -1px 2px var(--background); }
+.viewport-credit a { display: inline-flex; align-items: center; color: inherit; text-decoration: none; }
+.viewport-credit a:hover { color: var(--foreground); }
+.viewport-credit a:first-child:hover { text-decoration: underline; }
+.viewport-credit a:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 2px; }
 .mobile-sheet { width: min(330px, 90vw); overflow-y: auto; }
 .mobile-sheet .controls { padding: 16px 2px 28px; }
 
