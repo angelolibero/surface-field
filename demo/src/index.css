@@ -9,8 +9,18 @@
 /* The field tint stays separate so the demo can show the package's own accent. */
 :root {
   --radius: 0.875rem;
-  --radius-control-sm: 12px;
-  --radius-card: 16px;
+  /* ═══ ONE LADDER OF CORNERS, NAMED BY WHAT THE OBJECT IS ═══════════════
+     Every rung is a multiple of `--round-scale`, so a rounder or squarer demo
+     is one number and the corners keep their ratios. The rungs are
+     Screenboard's: a corner is chosen by the size and role of the box, never
+     guessed per rule, and a box that holds another box takes the rung above. */
+  --round-scale: 1;
+  --radius-box: calc(11px * var(--round-scale));   /* a 36px mark */
+  --radius-control-sm: calc(12px * var(--round-scale)); /* a 36px control */
+  --radius-plate: calc(13px * var(--round-scale)); /* a well inside a panel */
+  --radius-card: calc(16px * var(--round-scale));  /* the card: an object, a node */
+  --radius-panel: calc(18px * var(--round-scale)); /* a card that holds other things */
+  --radius-slab: calc(20px * var(--round-scale));  /* the tallest plate on the page */
   --background: oklch(0.971 0 0);
   --foreground: oklch(0.22 0 0);
   --card: oklch(0.998 0 0);
@@ -35,6 +45,81 @@
   --thumb-shadow: 0 1px 2px oklch(0 0 0 / 28%);
   --track-fill: color-mix(in oklab, var(--muted) 92%, var(--foreground) 8%);
   --surface-field-tint: oklch(0.68 0.17 255);
+
+  /* ═══ A CARD IS A HAIR UNDER WHITE ══════════════════════════════════════
+     The lit top edge needs something to be white AGAINST. On paper at 0.998 a
+     white line is invisible, so the face is 0.987: low enough that the edge
+     reads along its whole width, high enough that the card still reads white.
+     `--card` stays white for what means white: a menu, a thumb, a track. */
+  --card-face: oklch(0.987 0 0);
+  --thumb-face: var(--card);
+
+  /* ═══ HOW FAR THINGS FALL, AND THE ONE INK THEY FALL IN ════════════════
+     `--shadow-scale` moves every blurred layer and no line: a lit edge or a
+     hairline is geometry, and scaling it takes the object's edge away instead
+     of lowering it. 1.35 and not higher because this page stacks casts, a pill
+     over the field over a card, and past it two planes read as one bruise.
+     .
+     THE INK IS A FIXED DARK AND NEVER `--foreground`. A cast is the absence of
+     light, and `--foreground` is whatever the text is: in dark it is near
+     white, so a shadow mixed from it is a pale halo round every card. That was
+     this demo's dark mode. The ink is a warm-free grey here and pure black in
+     dark, and nothing else in the scale knows which theme it is in. */
+  --shadow-scale: 1.35;
+  --shadow-ink: oklch(0.3 0 0);
+  --hl-top: inset 0 1px 0 oklch(1 0 0 / 0.6);
+  --shadow-e1: 0 calc(1px * var(--shadow-scale)) calc(2px * var(--shadow-scale))
+    color-mix(in oklab, var(--shadow-ink) 5%, transparent);
+  /* e2 is RESTING: a card on the page. Two layers, a tight contact and a wide
+     ambient, because one blur is either a smudge or a halo and never both. */
+  --shadow-e2:
+    0 calc(1px * var(--shadow-scale)) calc(2px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 4%, transparent),
+    0 calc(8px * var(--shadow-scale)) calc(22px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 6%, transparent);
+  /* The hover rung, BETWEEN e2 and e3: a card under the pointer answers, it
+     does not claim to float as far off the page as the chrome does. */
+  --shadow-lift:
+    0 calc(3px * var(--shadow-scale)) calc(8px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 5%, transparent),
+    0 calc(14px * var(--shadow-scale)) calc(32px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 9%, transparent);
+  /* e3 is FLOATING: chrome over the field, a menu, a card being carried. */
+  --shadow-e3:
+    0 calc(6px * var(--shadow-scale)) calc(16px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 7%, transparent),
+    0 calc(26px * var(--shadow-scale)) calc(50px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 12%, transparent);
+  /* A small plate lifting off its own track: the tab thumb. A 1px dark foot
+     and a lip under the face say *pressable*, which a card must not say. */
+  --shadow-plate:
+    inset 0 -1px 0 color-mix(in oklab, oklch(0 0 0) 8%, transparent),
+    0 1px 0 color-mix(in oklab, oklch(0 0 0) 8%, transparent),
+    0 calc(2.5px * var(--shadow-scale)) calc(5px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 8%, transparent);
+
+  /* ═══ THE CARD'S RING FADES DOWN ════════════════════════════════════════
+     Dark above the lit edge, almost gone at the foot: up top it is what the
+     white line is seen against, at the bottom the cast is already separating
+     paper from page and a full ring would be a second outline saying it
+     again. SOLID stops mixed into the page, not black over nothing, so a card
+     over a bright patch of the field does not lose its fade. The middle stop
+     sits above half because the ring's work is at the top. */
+  --surface-ring-top: color-mix(in oklab, var(--foreground) 9.5%, var(--background));
+  --surface-ring-mid: color-mix(in oklab, var(--foreground) 4.5%, var(--background));
+  --surface-ring-foot: color-mix(in oklab, var(--foreground) 1.5%, var(--background));
+  --surface-ring-mid-at: 45%;
+  /* The lit top edge of a card, and how far down it lets go. A DISTANCE, not
+     a percentage: a card is 68px or 400px, and a highlight that fades over
+     half of it is a gradient again. 22px is a top catching light. */
+  --lit-edge: color-mix(in oklab, white 45%, transparent);
+  --lit-edge-mid: color-mix(in oklab, white 20%, transparent);
+  --lit-edge-reach: 22px;
+  /* What floats over the field is glass in light: 90% of the face lets the
+     field's colour through, the blur keeps it colour and never shape, and the
+     saturation stops a blurred tint arriving as grey. */
+  --float-face: color-mix(in oklab, var(--card-face) 90%, transparent);
+  --float-filter: blur(24px) saturate(1.8);
 }
 
 .dark {
@@ -60,6 +145,57 @@
   --hairline: oklch(1 0 0 / 0.09);
   --thumb-ring: var(--foreground);
   --thumb-shadow: 0 1px 2px oklch(0 0 0 / 45%);
+
+  /* ═══ IN DARK, A PLANE IS A LIGHTER FACE WITH A LIT EDGE ════════════════
+     There is no white page for a cast to work against, so separation comes
+     from three things in this order: a face one step above the ground (0.245
+     over 0.195, chrome one more at 0.262), a hairline of light where it ends,
+     and a lit top edge. The cast only has to say *there is a gap*, and it
+     says it in black, never in the text colour.
+     .
+     THE CASTS ARE DILUTED, NOT ONLY DEEPENED. A 22px blur under a card on a
+     dark ground is a defined bowl of black and reads heavy at any opacity
+     because the eye finds its edge. So the ambient layer falls further and
+     spreads twice as wide: the same ink over four times the area, which
+     darkens the ground instead of drawing a hole under the card. */
+  --card-face: var(--card);
+  --thumb-face: color-mix(in oklab, var(--foreground) 8%, var(--accent));
+  --shadow-ink: oklch(0 0 0);
+  /* 0.11 AND NOT 0.6: the same alpha that is a soft edge on white paper is a
+     drawn white rule on near black. Seen, not noticed. */
+  --hl-top: inset 0 1px 0 oklch(1 0 0 / 0.11);
+  --shadow-e1: 0 calc(1px * var(--shadow-scale)) calc(2px * var(--shadow-scale))
+    color-mix(in oklab, var(--shadow-ink) 30%, transparent);
+  --shadow-e2:
+    0 calc(1px * var(--shadow-scale)) calc(3px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 18%, transparent),
+    0 calc(12px * var(--shadow-scale)) calc(44px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 22%, transparent);
+  --shadow-lift:
+    0 calc(4px * var(--shadow-scale)) calc(14px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 22%, transparent),
+    0 calc(18px * var(--shadow-scale)) calc(56px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 28%, transparent);
+  --shadow-e3:
+    0 calc(8px * var(--shadow-scale)) calc(28px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 26%, transparent),
+    0 calc(30px * var(--shadow-scale)) calc(84px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 34%, transparent);
+  --shadow-plate:
+    0 1px 0 color-mix(in oklab, oklch(0 0 0) 30%, transparent),
+    0 calc(2.5px * var(--shadow-scale)) calc(5px * var(--shadow-scale))
+      color-mix(in oklab, var(--shadow-ink) 30%, transparent);
+  /* The ring does not fade up here: the hairline is light, not ink, and light
+     at the foot of a card is exactly where the page is darkest behind it. */
+  --surface-ring-top: var(--hairline);
+  --surface-ring-mid: var(--hairline);
+  --surface-ring-foot: var(--hairline);
+  --lit-edge: color-mix(in oklab, white 13%, transparent);
+  --lit-edge-mid: color-mix(in oklab, white 5%, transparent);
+  /* Opaque in dark. The plate is already brighter than the ground around it,
+     and a see-through one would lose the only thing it has. */
+  --float-face: var(--popover);
+  --float-filter: none;
 }
 
 @theme inline {
@@ -93,15 +229,24 @@ body { margin: 0; background: var(--background); color: var(--foreground); }
 button, input { font: inherit; }
 
 .app-shell { position: relative; height: 100svh; min-height: 560px; overflow: hidden; }
+/* The visible canvas starts where the floating sidebar ends, so anything
+   centred on it (the tabs, React Flow's controls) moves by half the sidebar. */
+.app-shell { --canvas-center-offset: 162px; }
+.demo-panel { height: 100%; outline: none; }
+.demo-tabs { position: absolute; z-index: 20; top: 18px; left: calc(50% + var(--canvas-center-offset)); transform: translateX(-50%); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px; border-radius: 999px; }
+.demo-tabs-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / 2); border-radius: 999px; background: var(--thumb-face); box-shadow: var(--shadow-plate), var(--hl-top); transform: translateX(calc(100% * var(--tab-index, 0))); transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1); pointer-events: none; }
+.demo-tab { position: relative; z-index: 1; height: 30px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; color: var(--muted-foreground); font-size: 12.75px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color 160ms ease; }
+.demo-tab:hover, .demo-tab[data-state="active"] { color: var(--foreground); }
+.demo-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand-mark { position: relative; width: 38px; height: 38px; flex: none; overflow: hidden; border: 1px solid var(--hairline); border-radius: 10px; background: var(--card); box-shadow: 0 1px 2px color-mix(in oklab, var(--foreground) 5%, transparent); pointer-events: none; }
+.brand-mark { position: relative; width: 38px; height: 38px; flex: none; overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius-box); background: var(--card-face); box-shadow: var(--shadow-e1), var(--hl-top); pointer-events: none; }
 .brand-copy { flex: 1; min-width: 0; }
 .sidebar-brand strong { display: block; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.035em; }
 .sidebar-brand small { display: block; color: var(--muted-foreground); font-size: 11px; margin-top: 1px; }
 .sidebar-brand .theme-button { flex: none; }
 .mobile-controls-button { display: none; }
 .app-body { height: 100%; min-height: 0; }
-.control-sidebar { position: absolute; z-index: 10; left: 18px; top: 18px; bottom: 18px; width: 306px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 20px; background: color-mix(in oklab, var(--sidebar) 96%, transparent); box-shadow: 0 20px 55px color-mix(in oklab, var(--foreground) 12%, transparent), 0 2px 10px color-mix(in oklab, var(--foreground) 5%, transparent); scrollbar-color: var(--border) transparent; scrollbar-width: thin; backdrop-filter: blur(18px); }
+.control-sidebar { position: absolute; z-index: 10; left: 18px; top: 18px; bottom: 18px; width: 306px; overflow-y: auto; border-radius: var(--radius-slab); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
 .controls { padding: 25px 23px 30px; display: flex; flex-direction: column; gap: 21px; }
 .controls-intro p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted-foreground); }
 .preset-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -127,11 +272,10 @@ button, input { font: inherit; }
 .color-picker:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 3px; }
 .workspace { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; }
 .canvas { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); isolation: isolate; touch-action: none; }
-.field-object { position: absolute; z-index: 2; user-select: none; touch-action: none; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-card); box-shadow: 0 12px 32px color-mix(in oklab, var(--foreground) 9%, transparent), 0 2px 5px color-mix(in oklab, var(--foreground) 4%, transparent); transition: box-shadow 160ms ease; }
-.field-object:hover, .field-object:focus-within { box-shadow: 0 17px 42px color-mix(in oklab, var(--foreground) 15%, transparent), 0 2px 7px color-mix(in oklab, var(--foreground) 5%, transparent); }
+.field-object { position: absolute; z-index: 2; user-select: none; touch-action: none; }
 .object-handle { position: absolute; z-index: 1; display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted-foreground); padding: 0; touch-action: none; opacity: .72; transition: opacity 120ms ease, color 120ms ease; }
-.field-object:hover .object-handle, .field-object:focus-within .object-handle, .object-handle:hover { opacity: .86; }
-.field-object .object-handle:hover, .field-object .object-handle:focus-visible { color: var(--foreground); opacity: 1; }
+.surface-card:hover .object-handle, .surface-card:focus-within .object-handle, .object-handle:hover { opacity: .86; }
+.surface-card .object-handle:hover, .surface-card .object-handle:focus-visible { color: var(--foreground); opacity: 1; }
 .object-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; border-radius: 7px; }
 .handle-mark { position: relative; display: block; pointer-events: none; }
 .move-handle { top: 0; left: 50%; transform: translateX(-50%); cursor: grab; }
@@ -147,12 +291,75 @@ button, input { font: inherit; }
 .mobile-sheet { width: min(330px, 90vw); overflow-y: auto; }
 .mobile-sheet .controls { padding: 16px 2px 28px; }
 
+/* ═══ TWO PLATES, AND WHICH ONE A THING IS ═══════════════════════════════
+   .
+   RESTING: a card that is part of the scene, the objects the field flows
+   round and the graph's nodes, ONE `.surface-card` in both tabs. Flat paper,
+   a ring, a lit top edge, e2.
+   FLOATING: chrome that stands over the scene, the sidebar, the pills, the
+   minimap, a menu. Glass in light, a lighter opaque face in dark, a hairline
+   all round, e3 or e2 by size.
+   .
+   The split is the whole system. When every card was dressed like chrome and
+   every piece of chrome like a card, nothing on the page said which plane it
+   stood on. */
+.surface-card {
+  isolation: isolate;
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  /* THE RING IS THE HOST'S OWN BORDER BOX, a second background under the
+     face: a box-shadow has one colour all round and cannot fade down. */
+  background:
+    linear-gradient(var(--card-face), var(--card-face)) padding-box,
+    linear-gradient(180deg, var(--surface-ring-top), var(--surface-ring-mid) var(--surface-ring-mid-at), var(--surface-ring-foot)) border-box;
+  box-shadow: var(--selection, 0 0 0 0 transparent), var(--shadow-e2);
+  transition: box-shadow 160ms ease;
+}
+/* THE LIT EDGE lies on the border box so its arc is concentric with the
+   card's corner: at `inset: 0` it would sit 1px inside with the OUTER radius,
+   and the two curves visibly part at 45 degrees. The mask keeps only the 1px
+   band just inside the ring, so the ring stays the object's outline. */
+.surface-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--lit-edge) 0, var(--lit-edge-mid) calc(var(--lit-edge-reach) * 0.33), transparent var(--lit-edge-reach));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0) padding-box;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0) padding-box;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+/* Selection keeps its layer under the lift: box-shadow replaces, it does not add. */
+.surface-card:hover, .surface-card:focus-within { box-shadow: var(--selection, 0 0 0 0 transparent), var(--shadow-lift); }
+
+.control-sidebar, .demo-tabs, .flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap, [data-slot="select-content"] {
+  border: 1px solid var(--hairline);
+  background: var(--float-face);
+  -webkit-backdrop-filter: var(--float-filter);
+  backdrop-filter: var(--float-filter);
+  box-shadow: var(--shadow-e3), var(--hl-top);
+}
+/* The pills and the minimap are small and sit low over the scene: at e3 a
+   40px pill wears a shadow three times its own height. */
+.demo-tabs, .flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap { box-shadow: var(--shadow-e2), var(--hl-top); }
+[data-slot="select-content"] { border-radius: var(--radius-card); }
+[data-slot="sheet-content"] { border-color: var(--hairline); background: var(--card-face); box-shadow: var(--shadow-e3); }
+
 @media (max-width: 900px) {
   .control-sidebar { width: 290px; }
+  .app-shell { --canvas-center-offset: 154px; }
 }
 @media (max-width: 768px) {
   .app-shell { height: 100svh; min-height: 480px; }
-  .mobile-controls-button { position: absolute; z-index: 5; top: 16px; left: 16px; display: inline-flex; background: var(--card); box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 12%, transparent); }
+  .app-shell { --canvas-center-offset: 0px; }
+  .demo-tabs { top: 16px; }
+  .demo-tab { padding: 0 13px; }
+  .mobile-controls-button { position: absolute; z-index: 5; top: 16px; left: 16px; display: inline-flex; border-color: var(--hairline); background: var(--float-face); box-shadow: var(--shadow-e2), var(--hl-top); -webkit-backdrop-filter: var(--float-filter); backdrop-filter: var(--float-filter); }
   .control-sidebar { display: none; }
   .viewport-credit { right: 16px; bottom: 14px; }
 }
@@ -170,3 +377,66 @@ button, input { font: inherit; }
 .house-slider input::-webkit-slider-thumb { box-sizing: border-box; width: 18px; height: 18px; margin-top: 2px; border: 3px solid var(--thumb-ring); border-radius: 50%; background: color-mix(in oklab, var(--card) 40%, transparent); box-shadow: var(--thumb-shadow); backdrop-filter: blur(2px) saturate(1.08); -webkit-backdrop-filter: blur(2px) saturate(1.08); appearance: none; -webkit-appearance: none; transform: translateX(var(--slider-pull-x)); transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1); }
 .house-slider input::-moz-range-thumb { box-sizing: border-box; width: 18px; height: 18px; border: 3px solid var(--thumb-ring); border-radius: 50%; background: color-mix(in oklab, var(--card) 40%, transparent); box-shadow: var(--thumb-shadow); backdrop-filter: blur(2px) saturate(1.08); transform: translateX(var(--slider-pull-x)); transition: transform 80ms cubic-bezier(0.22, 1, 0.36, 1); }
 .house-slider input:focus-visible { outline: 2px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: 3px; border-radius: 999px; }
+
+/* ── React Flow tab. base.css brings structure only; every colour here is a
+   theme token, so the graph repaints with the field when the theme flips. ── */
+.flow-canvas { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); isolation: isolate; }
+.flow-canvas .react-flow {
+  position: absolute; inset: 0;
+  --xy-background-color: transparent;
+  --xy-edge-stroke: color-mix(in oklab, var(--foreground) 26%, transparent);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: color-mix(in oklab, var(--foreground) 62%, transparent);
+  --xy-connectionline-stroke: color-mix(in oklab, var(--foreground) 62%, transparent);
+  --xy-connectionline-stroke-width: 1.5;
+  --xy-handle-background-color: var(--card);
+  --xy-selection-background-color: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --xy-selection-border: 1px solid color-mix(in oklab, var(--foreground) 30%, transparent);
+  --xy-minimap-background-color: transparent;
+  --xy-minimap-mask-background-color: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --xy-minimap-node-background-color: color-mix(in oklab, var(--foreground) 16%, transparent);
+  --xy-attribution-background-color: transparent;
+}
+.flow-canvas .react-flow__edge.selected .react-flow__edge-path { stroke-width: 2; }
+.flow-canvas .react-flow__edge.animated path { stroke-dasharray: 5; }
+
+/* The card is the playground's; only its content is the graph's. The top
+   padding keeps the kind line under the grip's 36px, not beside it. */
+.flow-node { position: relative; box-sizing: border-box; width: 100%; height: 100%; padding: 28px 18px 14px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+/* Selection is a ring OUTSIDE the plate, in the ink and never a hue: the
+   field is the only thing on this page that is coloured, and a selected card
+   is a state of the card, not a new object. */
+.flow-node { --selection: 0 0 0 0 transparent; }
+.react-flow__node.selected .flow-node { --selection: 0 0 0 1.5px color-mix(in oklab, var(--foreground) 55%, transparent), 0 0 0 5px color-mix(in oklab, var(--foreground) 7%, transparent); }
+/* Only the grip carries a card, so only the grip says grab, as in the playground. */
+.flow-canvas .react-flow__node.draggable { cursor: default; }
+.react-flow__node:focus-visible { outline: none; }
+.react-flow__node:focus-visible .flow-node { outline: 2px solid var(--ring); outline-offset: 3px; }
+.flow-node-kind { color: var(--muted-foreground); font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.flow-node-title { font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 14px; font-weight: 700; letter-spacing: -0.025em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* THE RESIZE CONTROL is only the playground corner's box: React Flow's
+   handle is a 5px dot centred ON the corner, and this puts it back inside the
+   card, 36px square, so the button it holds lands where the playground's does.
+   Five classes because base.css places the corner with four. */
+.flow-canvas .flow-node .react-flow__resize-control.handle.surface-resize-control { z-index: 1; top: auto; left: auto; right: 0; bottom: 0; width: 36px; height: 36px; border: 0; border-radius: 0; background: transparent; translate: none; }
+.flow-node .react-flow__handle { width: 10px; height: 10px; border: 1.5px solid color-mix(in oklab, var(--foreground) 32%, transparent); border-radius: 50%; background: var(--card-face); transition: border-color 120ms ease, background-color 120ms ease; }
+.flow-node .react-flow__handle:hover, .flow-node .react-flow__handle.connectingfrom, .flow-node .react-flow__handle.valid { border-color: color-mix(in oklab, var(--foreground) 70%, transparent); background: color-mix(in oklab, var(--foreground) 14%, var(--card-face)); }
+
+.flow-canvas .react-flow__panel.bottom.center { left: calc(50% + var(--canvas-center-offset)); }
+.flow-canvas .react-flow__controls { display: flex; gap: 2px; padding: 4px; border-radius: 999px; }
+.flow-canvas .react-flow__controls-button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
+.flow-canvas .react-flow__controls-button:hover { background: var(--accent); color: var(--foreground); }
+.flow-canvas .react-flow__controls-button:disabled { opacity: 0.4; pointer-events: none; }
+.flow-canvas .react-flow__controls-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.flow-canvas .react-flow__controls-button svg { width: 12px; height: 12px; fill: currentColor; }
+.flow-canvas .react-flow__minimap { overflow: hidden; margin: 18px; border-radius: var(--radius-card); }
+.flow-canvas .react-flow__minimap-svg { display: block; }
+.flow-canvas .react-flow__attribution { margin: 0 20px 40px 0; }
+.flow-canvas .react-flow__attribution a { color: var(--muted-foreground); opacity: 0.7; }
+
+@media (max-width: 768px) {
+  .flow-canvas .react-flow__minimap { display: none; }
+  /* The credit line owns the bottom edge on a phone; the controls sit above it. */
+  .flow-canvas .react-flow__panel.bottom.center { margin-bottom: 44px; }
+  .flow-canvas .react-flow__attribution { margin: 0 16px 36px 0; }
+}
