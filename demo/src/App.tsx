@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { GithubIcon } from "@hugeicons/core-free-icons";
 import { PlaygroundDemo } from "./PlaygroundDemo";
 import { useFieldSettings } from "./FieldControls";
+import { Segmented } from "./Segmented";
 
 /* React Flow is loaded with its tab, so the playground never pays for it. */
 const FlowDemo = React.lazy(() => import("./FlowDemo").then(module => ({ default: module.FlowDemo })));
@@ -40,12 +41,9 @@ export default function App() {
   };
 
   return <Tabs.Root className="app-shell" value={tab} onValueChange={choose}>
-    <Tabs.List className="demo-tabs" aria-label="Demo" style={{ "--tab-index": tabs.findIndex(item => item.id === tab) } as React.CSSProperties}>
-      <span className="demo-tabs-thumb" aria-hidden="true" />
-      {tabs.map(item => <Tabs.Trigger key={item.id} value={item.id} className="demo-tab">{item.label}</Tabs.Trigger>)}
-    </Tabs.List>
-    <Tabs.Content value="playground" className="demo-panel"><PlaygroundDemo settings={settings} dark={dark} setDark={setDark} /></Tabs.Content>
-    <Tabs.Content value="react-flow" className="demo-panel"><React.Suspense fallback={null}><FlowDemo settings={settings} dark={dark} setDark={setDark} /></React.Suspense></Tabs.Content>
+    <Segmented className="demo-tabs" aria-label="Demo" size="sm" value={tab} onChange={choose} controls="demo-panel" options={tabs.map(item => ({ value: item.id, label: item.label }))} />
+    <Tabs.Content value="playground" id={tab === "playground" ? "demo-panel" : undefined} className="demo-panel"><PlaygroundDemo settings={settings} dark={dark} setDark={setDark} /></Tabs.Content>
+    <Tabs.Content value="react-flow" id={tab === "react-flow" ? "demo-panel" : undefined} className="demo-panel"><React.Suspense fallback={null}><FlowDemo settings={settings} dark={dark} setDark={setDark} /></React.Suspense></Tabs.Content>
     <div className="viewport-credit">
       <a href="https://github.com/angelolibero" target="_blank" rel="noopener noreferrer">Made by Angelo Libero</a>
       <a href="https://github.com/angelolibero/surface-field" target="_blank" rel="noopener noreferrer" aria-label="Surface Field on GitHub" title="Surface Field on GitHub"><HugeiconsIcon icon={GithubIcon} size={14} /></a>
