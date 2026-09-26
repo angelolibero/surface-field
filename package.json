@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
-  "description": "Themeable React canvas field of dots, lines and interactive light",
+  "description": "Themeable React field of dots and lines that makes room around surfaces, with light that follows the pointer",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

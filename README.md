@@ -2,7 +2,7 @@
 
 ![Surface Field: dots and lines bending around floating surfaces](docs/assets/surface-field-cover.png)
 
-A responsive React canvas field of dots, connected lines, moving light, and local pointer distortion. It is decorative, theme aware, and has no UI framework dependency.
+A React canvas field of dots and lines that makes room around surfaces: it clears around the ones laid on it, bends as they move, and lights up under the pointer. It is decorative, theme aware, and has no UI framework dependency.
 
 Try the [interactive demo](https://angelolibero.github.io/surface-field/) with presets, live controls, draggable objects, light and dark themes, and a copyable React configuration.
 
