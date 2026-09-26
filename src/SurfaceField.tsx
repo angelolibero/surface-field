@@ -1705,6 +1705,7 @@ export function SurfaceField({
         repainted where it changed. The rectangle's edges are on the midlines
         between dots , see `snap`. */
     const sweep = (x0: number, y0: number, x1: number, y1: number) => {
+      paints++;
       prepareRipples();
       /* An edge clamped to the canvas is not a midline once the grid is
          panned; the first column then starts at 0 rather than rounding past
@@ -1728,6 +1729,7 @@ export function SurfaceField({
         change seen with no loop running. Everything else goes through
         `sweep`, which draws the same picture by drawing only its changes. */
     const render = () => {
+      paints++;
       ctx.clearRect(0, 0, width, height);
       prepareRipples();
       fabricDirtyCount = 0;
@@ -1845,6 +1847,47 @@ export function SurfaceField({
       paintRegions(regions);
     };
 
+    /* What a held frame's picture was worked out FROM, beyond the pointer.
+       `paints` counts every paint of any kind, so a snapshot is only trusted
+       by the next held frame when nothing else has drawn in between. */
+    let paints = 0;
+    type HeldSignature = {
+      shapes: Footprint[] | undefined;
+      weight: number;
+      ids: readonly string[] | undefined;
+      rings: { footprints: Footprint[] | undefined; x: number; y: number; radius: number; amp: number }[];
+      colour: number[];
+      animated: boolean;
+    };
+    let heldPainted: (HeldSignature & { paints: number }) | null = null;
+    const heldSignature = (): HeldSignature => {
+      const rings: HeldSignature["rings"] = [];
+      for (let i = 0; i < preparedCount; i++) {
+        const rp = preparedRipples[i];
+        rings.push({ footprints: rp.footprints, x: rp.x, y: rp.y, radius: rp.radius, amp: rp.amp });
+      }
+      return {
+        shapes: focusShapes,
+        weight: focusShapeWeight,
+        ids: press?.ring?.ids,
+        rings,
+        colour: [fg[0], fg[1], fg[2], primary[0], primary[1], primary[2], baseAlpha, peakAlpha],
+        animated: breathIdx.length > 0 || Boolean(tintHueVar && hueMoving),
+      };
+    };
+    const sameHeld = (a: HeldSignature, b: HeldSignature) =>
+      !a.animated && !b.animated &&
+      a.shapes === b.shapes && a.weight === b.weight && a.ids === b.ids &&
+      a.rings.length === b.rings.length &&
+      a.rings.every((ring, i) => {
+        const other = b.rings[i];
+        /* A ring with a footprint measures from the rectangle and never reads
+           its own centre (`evalDot`), which follows the pointer. */
+        return ring.footprints === other.footprints && ring.radius === other.radius && ring.amp === other.amp &&
+          (ring.footprints ? true : ring.x === other.x && ring.y === other.y);
+      }) &&
+      a.colour.every((v, i) => v === b.colour[i]);
+
     /* `evalDot` discards crest influence below 0.002. Four Gaussian widths
        are already below that threshold even at maximum amplitude, so a held
        crest cannot change a cell beyond this box. Include its previous box
@@ -1856,8 +1899,36 @@ export function SurfaceField({
         sweep(0, 0, width, height);
         prevBox = null;
         prevHeldBoxes = [];
+        heldPainted = null;
         return;
       }
+      /* ═══ A HELD FRAME REPAINTS WHAT CAN HAVE CHANGED, AND NOTHING ELSE ════
+         .
+         Measured on a resize (`docs/audits/2026-09-25-resize-cpu-profile.md`
+         #6): this frame swept the light's box, the held surface's field box
+         and its crest on EVERY vsync, and at a light radius of 600 their
+         union is most of the canvas, worked out dot by dot at 120 Hz while the
+         footprint it describes moves at the hand's 60.
+         .
+         Two of those boxes are provably the picture already on the canvas:
+         .
+         THE HELD SURFACE, while nothing that shapes it moved since the last
+         held frame painted it: the same footprint objects (`onFootprint`
+         keeps them while equal), the same weight, the same carried ids, the
+         same rings and the same colours. `sweep` would work every dot out
+         again and find none stale.
+         .
+         THE LIGHT, once the surface is at full weight now AND was at the last
+         paint. At weight 1 `focusAt` gives the pointer's light `1 − w = 0`
+         and the cursor push is gated off, so where the hand is changes no
+         dot; and the frame that reached 1 had already swept the light out.
+         .
+         ANY OTHER PAINT IN BETWEEN VOIDS BOTH (`paints`), and so does a
+         breath or a turning hue: those change dots under the held boxes with
+         time, and today's sweep is what carries them there. */
+      const signature = heldSignature();
+      const kept = heldPainted !== null && heldPainted.paints === paints && sameHeld(heldPainted, signature);
+      const dark = kept && focusShapeWeight === 1;
       const cursor = snappedBox(fx, fy, fx, fy, focusRadius + dotPeak + 1);
       const currentHeld = focusShapes?.map(fieldBox) ?? [];
       const crests: Footprint[] = [];
@@ -1873,9 +1944,11 @@ export function SurfaceField({
         sweep(0, 0, width, height);
       } else {
         paintRegions([
-          { left: prevBox[0], top: prevBox[1], right: prevBox[2], bottom: prevBox[3] }, cursor,
-          ...prevHeldBoxes.map(box => ({ ...box })), ...currentHeld.map(box => ({ ...box })),
-          ...prevRippleBoxes.map(box => ({ ...box })), ...crests,
+          ...(dark ? [] : [{ left: prevBox[0], top: prevBox[1], right: prevBox[2], bottom: prevBox[3] }, cursor]),
+          ...(kept ? [] : [
+            ...prevHeldBoxes.map(box => ({ ...box })), ...currentHeld.map(box => ({ ...box })),
+            ...prevRippleBoxes.map(box => ({ ...box })), ...crests,
+          ]),
           ...prevSelectionBoxes.map(box => ({ ...box })), ...fields.map(box => ({ ...box })),
         ]);
       }
@@ -1883,6 +1956,7 @@ export function SurfaceField({
       prevHeldBoxes = currentHeld;
       prevRippleBoxes = crests;
       prevSelectionBoxes = fields;
+      heldPainted = { ...signature, paints };
     };
 
     /* Each moved surface has its own wave support. Keep old and new regions
@@ -2072,6 +2146,7 @@ export function SurfaceField({
     };
 
     const renderBreath = () => {
+      paints++;
       /* PAST A QUARTER OF THE FIELD IT IS THE WHOLE FIELD. Walking a list of
          three thousand indices is walking the grid with extra steps, and the
          whole-grid walk is what has always happened above this share: it also
@@ -2504,12 +2579,23 @@ export function SurfaceField({
         });
       }
       if (!footprints.length) return;
+      /* AN EQUAL FOOTPRINT IS NO NEWS, and it keeps the objects the last held
+         frame was drawn from, which is what lets the next one skip the held
+         surface (`renderHeld`). A host that repeats itself costs nothing. */
+      if (ring.footprints && ring.source === source && sameIds(ring.ids, ids) &&
+          ring.footprints.length === footprints.length &&
+          ring.footprints.every((shape, i) => {
+            const next = footprints[i];
+            return shape.left === next.left && shape.top === next.top && shape.right === next.right && shape.bottom === next.bottom;
+          })) return;
       if (!ring.footprints) ring.footprintAt = performance.now();
       ring.source = source;
       ring.ids = ids;
       ring.footprints = footprints;
       wake();
     };
+    const sameIds = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
+      a === b || (!!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]));
     const clearPreview = (committed = false) => {
       if (!preview || !preview.target) return;
       preview.target = 0;
