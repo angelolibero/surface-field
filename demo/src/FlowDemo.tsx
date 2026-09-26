@@ -194,7 +194,7 @@ const fitOptions = (): FitViewOptions => ({
     : { top: "84px", right: "28px", bottom: "96px", left: "28px" },
 });
 
-function FlowCanvas({ config, accent, dark }: { config: Config; accent: string; dark: boolean }) {
+function FlowCanvas({ config, accent, dark }: { config: Config; accent: string | null; dark: boolean }) {
   const fitViewOptions = React.useMemo(fitOptions, []);
   const root = React.useRef<HTMLDivElement>(null);
   const controller = React.useMemo(createSurfaceFieldController, []);

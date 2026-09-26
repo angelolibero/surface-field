@@ -264,27 +264,41 @@ body { margin: 0; background: var(--background); color: var(--foreground); }
 button:not(.segmented-option), input { font: inherit; }
 
 .app-shell { position: relative; height: 100svh; min-height: 560px; overflow: hidden; }
-/* The visible canvas starts where the floating sidebar ends, so anything
+/* The visible canvas starts where the docked sidebar ends, so anything
    centred on it (the tabs, React Flow's controls) moves by half the sidebar. */
-.app-shell { --canvas-center-offset: 162px; }
+.app-shell { --canvas-center-offset: 153px; }
 .demo-panel { height: 100%; outline: none; }
 /* The tabs float over the canvas, centred on the part of it the sidebar leaves.
    Position only: everything the control looks like is `.segmented`, below. */
 .demo-tabs { position: absolute; z-index: 20; top: 18px; left: calc(50% + var(--canvas-center-offset)); transform: translateX(-50%); }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.brand-mark { position: relative; width: 38px; height: 38px; flex: none; overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius-box); background: var(--card-face); box-shadow: var(--shadow-e1), var(--hl-top); pointer-events: none; }
+.brand-mark { position: relative; width: 32px; height: 32px; flex: none; overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius-box); background: var(--card-face); box-shadow: var(--shadow-e1), var(--hl-top); pointer-events: none; }
 .brand-copy { flex: 1; min-width: 0; }
 .sidebar-brand strong { display: block; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: -0.035em; }
 .sidebar-brand small { display: block; color: var(--muted-foreground); font-size: 11px; margin-top: 1px; }
-.sidebar-brand .theme-button { flex: none; }
+.brand-actions { display: flex; flex: none; align-items: center; gap: 2px; margin-right: -4px; }
+.brand-actions [data-slot="button"] { color: var(--muted-foreground); }
+/* The header's two and the preset's reset are one kind of button: 28px with a
+   16px glyph, big enough to hit and still lighter than the controls they sit by. */
+.controls .brand-actions [data-slot="button"], .controls .group-title-action [data-slot="button"] { width: 28px; height: 28px; }
 .mobile-controls-button { display: none; }
+/* FULL SCREEN: with the sidebar shut the canvas is the whole window, so its
+   centre is the window's, and one floating button brings the column back. */
+.app-shell[data-sidebar="closed"] { --canvas-center-offset: 0px; }
+.sidebar-open-button { position: absolute; z-index: 5; top: 18px; left: 18px; }
 .app-body { height: 100%; min-height: 0; }
-.control-sidebar { position: absolute; z-index: 10; left: 18px; top: 18px; bottom: 18px; width: 306px; overflow-y: auto; border-radius: var(--radius-slab); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+/* DOCKED, not floating: the controls are the page's own column, so they meet
+   the window's edges and stand beside the scene instead of over it. */
+.control-sidebar { position: absolute; z-index: 10; left: 0; top: 0; bottom: 0; width: 306px; overflow-y: auto; border-right: 1px solid var(--hairline); background: var(--sidebar); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
 .controls { padding: 25px 23px 30px; display: flex; flex-direction: column; gap: 21px; }
 .controls-intro p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted-foreground); }
 .preset-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.preset-row [data-slot="select-trigger"] { flex: 1 1 0; width: 0; min-width: 0; }
-.preset-row > button { flex: none; }
+.preset-row [data-slot="select-trigger"] { flex: 1 1 50%; width: 0; min-width: 0; }
+/* Half and half: with a label the copy button is as wide as the menu anyway,
+   and two equal halves read as one row instead of a field and a leftover. */
+/* A 50% BASIS, not 0: a zero basis is floored at each box's own padding, and
+   the button's is wider than the menu's, so "equal" came out 4px apart. */
+.preset-row > button { flex: 1 1 50%; min-width: 0; }
 .controls [data-slot="button"], .controls [data-slot="select-trigger"], .mobile-controls-button { border-radius: var(--radius-control-sm); font-size: 12.75px; }
 .controls [data-slot="button"][data-size="sm"] { height: 36px; }
 .controls [data-slot="button"][data-size="icon"] { width: 36px; height: 36px; }
@@ -292,6 +306,8 @@ button:not(.segmented-option), input { font: inherit; }
 .controls [data-slot="separator"] { background: var(--hairline); }
 .control-group { display: flex; flex-direction: column; gap: 17px; }
 .group-title { display: flex; align-items: baseline; justify-content: space-between; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 13px; font-weight: 700; letter-spacing: -0.025em; }
+.group-title-action { align-items: center; min-height: 28px; margin-block: -2px; }
+.group-title-action [data-slot="button"] { margin-right: -4px; color: var(--muted-foreground); }
 .slider-row { display: flex; flex-direction: column; gap: 11px; }
 .control-line, .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .control-line label, .switch-row label, .color-control label { font-size: 12.75px; font-weight: 500; }
@@ -329,8 +345,8 @@ button:not(.segmented-option), input { font: inherit; }
    RESTING: a card that is part of the scene, the objects the field flows
    round and the graph's nodes, ONE `.surface-card` in both tabs. Flat paper,
    a ring, a lit top edge, e2.
-   FLOATING: chrome that stands over the scene, the sidebar, the pills, the
-   minimap, a menu. Glass in light, a lighter opaque face in dark, a hairline
+   FLOATING: chrome that stands over the scene, the pills, the minimap, a
+   menu. The sidebar is neither: it is docked, a column of the page. Glass in light, a lighter opaque face in dark, a hairline
    all round, e3 or e2 by size.
    .
    The split is the whole system. When every card was dressed like chrome and
@@ -370,7 +386,7 @@ button:not(.segmented-option), input { font: inherit; }
 /* Selection keeps its layer under the lift: box-shadow replaces, it does not add. */
 .surface-card:hover, .surface-card:focus-within { box-shadow: var(--selection, 0 0 0 0 transparent), var(--shadow-lift); }
 
-.control-sidebar, .flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap, [data-slot="select-content"] {
+.sidebar-open-button, .flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap, [data-slot="select-content"] {
   border: 1px solid var(--hairline);
   background: var(--float-face);
   -webkit-backdrop-filter: var(--float-filter);
@@ -379,20 +395,20 @@ button:not(.segmented-option), input { font: inherit; }
 }
 /* The pills and the minimap are small and sit low over the scene: at e3 a
    40px pill wears a shadow three times its own height. */
-.flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap { box-shadow: var(--shadow-e2), var(--hl-top); }
+.sidebar-open-button, .flow-canvas .react-flow__controls, .flow-canvas .react-flow__minimap { box-shadow: var(--shadow-e2), var(--hl-top); }
 [data-slot="select-content"] { border-radius: var(--radius-card); }
 [data-slot="sheet-content"] { border-color: var(--hairline); background: var(--card-face); box-shadow: var(--shadow-e3); }
 
 @media (max-width: 900px) {
   .control-sidebar { width: 290px; }
-  .app-shell { --canvas-center-offset: 154px; }
+  .app-shell { --canvas-center-offset: 145px; }
 }
 @media (max-width: 768px) {
   .app-shell { height: 100svh; min-height: 480px; }
   .app-shell { --canvas-center-offset: 0px; }
   .demo-tabs { top: 16px; }
   .mobile-controls-button { position: absolute; z-index: 5; top: 16px; left: 16px; display: inline-flex; border-color: var(--hairline); background: var(--float-face); box-shadow: var(--shadow-e2), var(--hl-top); -webkit-backdrop-filter: var(--float-filter); backdrop-filter: var(--float-filter); }
-  .control-sidebar { display: none; }
+  .control-sidebar, .sidebar-open-button { display: none; }
   .viewport-credit { right: 16px; bottom: 14px; }
 }
 @media (max-width: 420px) {

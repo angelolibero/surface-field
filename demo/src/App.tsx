@@ -40,7 +40,7 @@ export default function App() {
     window.history.replaceState(null, "", `${pathname}${search}${next.hash}`);
   };
 
-  return <Tabs.Root className="app-shell" value={tab} onValueChange={choose}>
+  return <Tabs.Root className="app-shell" data-sidebar={settings.sidebar ? "open" : "closed"} value={tab} onValueChange={choose}>
     <Segmented className="demo-tabs" aria-label="Demo" size="sm" value={tab} onChange={choose} controls="demo-panel" options={tabs.map(item => ({ value: item.id, label: item.label }))} />
     <Tabs.Content value="playground" id={tab === "playground" ? "demo-panel" : undefined} className="demo-panel"><PlaygroundDemo settings={settings} dark={dark} setDark={setDark} /></Tabs.Content>
     <Tabs.Content value="react-flow" id={tab === "react-flow" ? "demo-panel" : undefined} className="demo-panel"><React.Suspense fallback={null}><FlowDemo settings={settings} dark={dark} setDark={setDark} /></React.Suspense></Tabs.Content>

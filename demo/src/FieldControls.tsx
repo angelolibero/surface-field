@@ -1,6 +1,6 @@
 import * as React from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { CheckmarkCircleIcon, Copy01Icon, Menu01Icon, RotateCcwIcon } from "@hugeicons/core-free-icons";
+import { CheckmarkCircleIcon, Copy01Icon, Menu01Icon, PanelLeftIcon, RotateCcwIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,25 +55,35 @@ const presets = {
 
 type Preset = keyof typeof presets | "custom";
 
-const defaultAccent = "#6683e8";
+/* NEUTRAL BY DEFAULT, and neutral is THE INK, not a grey. The field blends
+   its dots toward the accent, so an accent equal to the dots' own colour is
+   no blend at all in either theme: black would put out the light in dark, and
+   any grey pulls both themes toward the middle. `null` is that ink. */
+type Accent = string | null;
+const inkVar = "var(--foreground)";
 
-function snippet(config: Config, accent: string) {
-  const values = Object.entries(config).map(([key, value]) => `  ${key}={${JSON.stringify(value)}}`).join("\n");
-  return `import { SurfaceField } from "surface-field";\n\nexport function FieldBackdrop() {\n  return (\n    <div style={{ position: "relative", minHeight: 480 }}>\n      <style>{\`:root { --surface-field-tint: ${accent}; }\`}</style>\n      <SurfaceField\n${values.split("\n").map(line => `      ${line}`).join("\n")}\n        style={{ position: "absolute", inset: 0 }}\n      />\n      <div style={{ position: "relative" }}>Your content</div>\n    </div>\n  );\n}`;
+/* A neutral accent is tint 0 in someone else's page: their ink is not ours,
+   and a field with no tint token falls back to its own warm light. */
+function snippet(config: Config, accent: Accent) {
+  const values = Object.entries(accent === null ? { ...config, tint: 0 } : config).map(([key, value]) => `  ${key}={${JSON.stringify(value)}}`).join("\n");
+  return `import { SurfaceField } from "surface-field";\n\nexport function FieldBackdrop() {\n  return (\n    <div style={{ position: "relative", minHeight: 480 }}>\n${accent === null ? "" : `      <style>{\`:root { --surface-field-tint: ${accent}; }\`}</style>\n`}      <SurfaceField\n${values.split("\n").map(line => `      ${line}`).join("\n")}\n        style={{ position: "absolute", inset: 0 }}\n      />\n      <div style={{ position: "relative" }}>Your content</div>\n    </div>\n  );\n}`;
 }
 
 export type FieldSettings = {
-  config: Config; preset: Preset; accent: string; copied: boolean;
-  setPreset: (value: Preset) => void; setAccent: (value: string) => void;
+  config: Config; preset: Preset; accent: Accent; copied: boolean;
+  setPreset: (value: Preset) => void; setAccent: (value: Accent) => void;
   change: <K extends keyof Config>(key: K, value: Config[K]) => void;
   reset: () => void; copyCode: () => void;
+  /** The docked sidebar, held here so it stays open or shut across tabs. */
+  sidebar: boolean; setSidebar: (open: boolean) => void;
 };
 
 export function useFieldSettings(): FieldSettings {
   const [config, setConfig] = React.useState<Config>({ ...presets.workspace });
   const [preset, setPresetState] = React.useState<Preset>("workspace");
-  const [accent, setAccent] = React.useState<string>(defaultAccent);
+  const [accent, setAccent] = React.useState<Accent>(null);
   const [copied, setCopied] = React.useState(false);
+  const [sidebar, setSidebar] = React.useState(true);
 
   const change = React.useCallback(<K extends keyof Config>(key: K, value: Config[K]) => {
     setConfig(current => ({ ...current, [key]: value }));
@@ -86,13 +96,13 @@ export function useFieldSettings(): FieldSettings {
   }, []);
   const reset = React.useCallback(() => {
     setPreset("workspace");
-    setAccent(defaultAccent);
+    setAccent(null);
   }, [setPreset]);
 
   /* A LAYOUT effect, so the tint is on the root before any tab's passive
      effect calls `refreshTheme`: children's effects run before their parent's. */
   React.useLayoutEffect(() => {
-    document.documentElement.style.setProperty("--surface-field-tint", accent);
+    document.documentElement.style.setProperty("--surface-field-tint", accent ?? inkVar);
   }, [accent]);
 
   const copyCode = async () => {
@@ -101,7 +111,7 @@ export function useFieldSettings(): FieldSettings {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode };
+  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar };
 }
 
 /* ── The sidebar. ── */
@@ -132,18 +142,24 @@ type PanelProps = {
   setDark: (value: boolean) => void; onReset?: () => void;
 };
 
-function ControlPanel({ settings, intro, dark, setDark, onReset }: PanelProps) {
+function ControlPanel({ settings, intro, dark, setDark, onReset, onClose }: PanelProps & { onClose?: () => void }) {
   const { config, preset, accent, copied, setPreset, setAccent, change, copyCode } = settings;
   const reset = () => { settings.reset(); onReset?.(); };
   const accentInputId = React.useId();
+  /* Picking a colour is asking to see it: at a 0% blend the field would not
+     move at all, so the first pick brings the blend up to Ambient's 35%. */
+  const pickAccent = (value: string) => {
+    setAccent(value);
+    if (config.tint === 0) change("tint", 0.35);
+  };
   return <div className="controls">
-    <SidebarBrand dark={dark} setDark={setDark} />
+    <SidebarBrand dark={dark} setDark={setDark} onClose={onClose} />
     <div className="controls-intro">
       <p>{intro}</p>
     </div>
     <Separator />
     <div className="control-group">
-      <div className="group-title"><span>Preset</span></div>
+      <div className="group-title group-title-action"><span>Preset</span><Button variant="ghost" size="icon-xs" aria-label="Reset to Workspace" title="Reset to Workspace" onClick={reset}><HugeiconsIcon icon={RotateCcwIcon} className="size-4" /></Button></div>
       <div className="preset-row">
         <Select value={preset} onValueChange={value => {
           if (value !== "custom") setPreset(value as Preset);
@@ -157,8 +173,7 @@ function ControlPanel({ settings, intro, dark, setDark, onReset }: PanelProps) {
             {preset === "custom" && <SelectItem value="custom" disabled>Custom</SelectItem>}
           </SelectContent>
         </Select>
-        <Button variant="outline" size="icon" aria-label="Reset to Workspace" title="Reset to Workspace" onClick={reset}><HugeiconsIcon icon={RotateCcwIcon} size={15} /></Button>
-        <Button variant="outline" size="icon" aria-label={copied ? "React config copied" : "Copy React config"} title={copied ? "Copied React config" : "Copy React config"} onClick={copyCode}><HugeiconsIcon icon={copied ? CheckmarkCircleIcon : Copy01Icon} size={15} /></Button>
+        <Button variant="outline" size="sm" title="Copy React config" onClick={copyCode}><HugeiconsIcon icon={copied ? CheckmarkCircleIcon : Copy01Icon} size={15} />{copied ? "Copied" : "Copy config"}</Button>
       </div>
       <span className="sr-only" role="status" aria-live="polite">{copied ? "React config copied" : ""}</span>
     </div>
@@ -181,8 +196,8 @@ function ControlPanel({ settings, intro, dark, setDark, onReset }: PanelProps) {
     <Separator />
     <div className="control-group">
       <div className="group-title"><span>Color & motion</span></div>
-      <div className="color-control"><Label htmlFor={accentInputId}>Accent color</Label><span className="color-picker" style={{ "--selected-color": accent } as React.CSSProperties}>
-        <input id={accentInputId} type="color" value={accent} title={`Choose accent color (${accent})`} onInput={event => setAccent(event.currentTarget.value)} onChange={event => setAccent(event.currentTarget.value)} />
+      <div className="color-control"><Label htmlFor={accentInputId}>Accent color</Label><span className="color-picker" style={{ "--selected-color": accent ?? inkVar } as React.CSSProperties}>
+        <input id={accentInputId} type="color" value={accent ?? (dark ? "#ffffff" : "#000000")} title={accent ? `Choose accent color (${accent})` : "Choose accent color (neutral)"} onInput={event => pickAccent(event.currentTarget.value)} onChange={event => pickAccent(event.currentTarget.value)} />
       </span></div>
       <SliderRow id="tint" label="Accent blend" value={Math.round(config.tint * 100)} min={0} max={80} unit="%" onChange={value => change("tint", value / 100)} />
       <SwitchRow id="wander" label="Wandering light" description="Let the light drift when idle" checked={config.wander} onChange={value => change("wander", value)} />
@@ -195,8 +210,9 @@ function ControlPanel({ settings, intro, dark, setDark, onReset }: PanelProps) {
 /** Every tab's frame: the field sidebar on a wide screen, the same panel in a sheet below 769px, and the tab's canvas. */
 export function FieldWorkspace({ sheetTitle, children, ...panel }: PanelProps & { sheetTitle: string; children: React.ReactNode }) {
   return <div className="app-body">
-    <aside className="control-sidebar"><ControlPanel {...panel} /></aside>
+    {panel.settings.sidebar && <aside className="control-sidebar"><ControlPanel {...panel} onClose={() => panel.settings.setSidebar(false)} /></aside>}
     <main className="workspace">
+      {!panel.settings.sidebar && <Button className="sidebar-open-button" variant="outline" size="icon" aria-label="Show controls" title="Show controls" onClick={() => panel.settings.setSidebar(true)}><HugeiconsIcon icon={PanelLeftIcon} size={17} /></Button>}
       <Sheet><SheetTrigger asChild><Button className="mobile-controls-button" variant="outline" size="icon" aria-label="Open controls"><HugeiconsIcon icon={Menu01Icon} size={18} /></Button></SheetTrigger><SheetContent side="left" className="mobile-sheet"><SheetHeader><SheetTitle className="sr-only">{sheetTitle}</SheetTitle></SheetHeader><ControlPanel {...panel} /></SheetContent></Sheet>
       {children}
     </main>
