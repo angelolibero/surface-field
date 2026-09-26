@@ -1227,9 +1227,21 @@ export function SurfaceField({
         if (infl < 0.002) continue;
         wave += infl;
         if (rdist > 0.01 && ripplePush) {
-          const push = (infl * ripplePush) / rdist; // outward, normalised
-          px += rdx * push;
-          py += rdy * push;
+          if (shapes) {
+            /* A RECTANGLE'S CREST PUSHES ALONG THE SQUIRCLE'S NORMAL, not the
+               nearest point's: see `selectedPush` below for why. Its crest
+               keeps the Euclidean distance, which is what the repaint boxes
+               were sized for; only the direction is smoothed. */
+            const cx = rdx * rdx * rdx;
+            const cy = rdy * rdy * rdy;
+            const push = infl * ripplePush / Math.sqrt(cx * cx + cy * cy);
+            px += cx * push;
+            py += cy * push;
+          } else {
+            const push = (infl * ripplePush) / rdist; // outward, normalised
+            px += rdx * push;
+            py += rdy * push;
+          }
         }
       }
 
@@ -1243,18 +1255,45 @@ export function SurfaceField({
         const dy = y < field.top ? y - field.top : y > field.bottom ? y - field.bottom : 0;
         const d2 = dx * dx + dy * dy;
         if (d2 === 0 || d2 > rippleSupport * rippleSupport) continue;
-        const profile = Math.exp(-d2 / (2 * rippleWidth * rippleWidth));
+        /* ═══ A SURFACE LIFTS THE FABRIC ALONG A SQUIRCLE, NOT A RECTANGLE ═══
+           .
+           Measured from the nearest point of a sharp rectangle, the push is
+           flat beside each side and radial past each corner, and the two
+           meet on the sides' extensions with a jump in curvature of push/d:
+           every line crossing those rays folded there, hardest next to the
+           card. The 4-norm of the same outside distances has contours that
+           are rounded rectangles and a normal that turns with zero slope
+           where a side ends, so the lines bend round the surface the way
+           the pointer bends them, and the lift is the same lift.
+           .
+           The Gaussian keeps its width. The 4-norm is never longer than the
+           Euclidean distance, so the cutoff above stays the Euclidean one:
+           the repaint boxes were sized for it, and at 4 widths what the
+           diagonal loses is a tenth of a pixel. */
+        const ax2 = dx * dx;
+        const ay2 = dy * dy;
+        const q2 = Math.sqrt(ax2 * ax2 + ay2 * ay2); // squared 4-norm
+        const profile = Math.exp(-q2 / (2 * rippleWidth * rippleWidth));
         const edge = profile * weight;
         selectedWave = Math.max(selectedWave, edge);
         if (d2 > 0.0001 && ripplePush) {
-          const scale = edge * ripplePush / Math.sqrt(d2);
-          selectedPushX += dx * scale;
-          selectedPushY += dy * scale;
+          const cx = ax2 * dx;
+          const cy = ay2 * dy;
+          const scale = edge * ripplePush / Math.sqrt(cx * cx + cy * cy);
+          selectedPushX += cx * scale;
+          selectedPushY += cy * scale;
         }
       }
+      /* NEIGHBOURS SATURATE, THEY DO NOT CLIP. Two surfaces facing each other
+         sum their pushes; clamping the sum at ripplePush put a crease where it
+         crossed the limit, the rigid band between two close cards. This
+         8-norm soft limit is the identity to 0.1% at half the push, 0.92 of
+         it at the push, and approaches the push without ever passing it. */
       const selectedPush2 = selectedPushX * selectedPushX + selectedPushY * selectedPushY;
-      if (selectedPush2 > ripplePush * ripplePush) {
-        const scale = Math.abs(ripplePush) / Math.sqrt(selectedPush2);
+      if (selectedPush2 > 0 && ripplePush) {
+        const s2 = selectedPush2 / (ripplePush * ripplePush);
+        const s4 = s2 * s2;
+        const scale = 1 / Math.sqrt(Math.sqrt(Math.sqrt(1 + s4 * s4)));
         selectedPushX *= scale;
         selectedPushY *= scale;
       }
