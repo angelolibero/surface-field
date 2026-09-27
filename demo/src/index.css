@@ -322,6 +322,30 @@ button:not(.segmented-option), input { font: inherit; }
 .workspace { position: relative; width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; }
 .canvas { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); isolation: isolate; touch-action: none; }
 .field-object { position: absolute; z-index: 2; user-select: none; touch-action: none; }
+/* A round surface: the ring and the lit edge follow the radius on their own. */
+.field-object.is-ellipse { border-radius: 50%; }
+/* ═══ THE PLAYGROUND'S SURFACES ARE HELD LIKE A CANVAS'S LAYERS ═══
+   Nothing on the card itself: a press selects it and drags it, and the
+   selection draws the box, the corner squares that resize, the edges that
+   resize one side, and the turn zones just outside the corners, as in Figma. */
+.field-object { cursor: default; outline: none; }
+.selection { position: absolute; z-index: 3; pointer-events: none; box-shadow: 0 0 0 1.5px var(--selection-ink); }
+.selection { --selection-ink: color-mix(in oklab, var(--foreground) 62%, transparent); }
+.sel-corner { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; box-sizing: border-box; border: 1.5px solid var(--selection-ink); border-radius: 2px; background: var(--card-face); pointer-events: auto; }
+.sel-edge { position: absolute; pointer-events: auto; }
+.sel-edge[data-side="n"], .sel-edge[data-side="s"] { left: 6px; right: 6px; height: 10px; margin-top: -5px; cursor: ns-resize; }
+.sel-edge[data-side="e"], .sel-edge[data-side="w"] { top: 6px; bottom: 6px; width: 10px; margin-left: -5px; cursor: ew-resize; }
+.sel-edge[data-side="n"] { top: 0; } .sel-edge[data-side="s"] { top: 100%; }
+.sel-edge[data-side="w"] { left: 0; } .sel-edge[data-side="e"] { left: 100%; }
+.sel-corner[data-side="nw"], .sel-corner[data-side="se"] { cursor: nwse-resize; }
+.sel-corner[data-side="ne"], .sel-corner[data-side="sw"] { cursor: nesw-resize; }
+/* The turn zone: past the corner square, out of the box, where Figma keeps it. */
+.sel-turn { position: absolute; width: 20px; height: 20px; pointer-events: auto;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M6 15a9 9 0 0 1 9-9' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M6 15a9 9 0 0 1 9-9' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3Cpath d='M12.5 3.5 15.5 6l-3 2.5M3.5 12.5 6 15.5l2.5-3' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12.5 3.5 15.5 6l-3 2.5M3.5 12.5 6 15.5l2.5-3' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 12 12, grab; }
+.sel-turn[data-side="nw"] { left: -22px; top: -22px; }
+.sel-turn[data-side="ne"] { left: calc(100% + 2px); top: -22px; }
+.sel-turn[data-side="se"] { left: calc(100% + 2px); top: calc(100% + 2px); }
+.sel-turn[data-side="sw"] { left: -22px; top: calc(100% + 2px); }
 .object-handle { position: absolute; z-index: 1; display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted-foreground); padding: 0; touch-action: none; opacity: .72; transition: opacity 120ms ease, color 120ms ease; }
 .surface-card:hover .object-handle, .surface-card:focus-within .object-handle, .object-handle:hover { opacity: .86; }
 .surface-card .object-handle:hover, .surface-card .object-handle:focus-visible { color: var(--foreground); opacity: 1; }

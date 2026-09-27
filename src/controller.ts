@@ -2,11 +2,21 @@ import type { SurfaceFieldViewport } from "./viewport.js";
 
 export type { SurfaceFieldViewport } from "./viewport.js";
 
+/**
+ * A surface's own box, before any rotation. Without the optional fields it
+ * is a plain rectangle, as it has always been.
+ */
 export type SurfaceFieldRect = {
   left: number;
   top: number;
   right: number;
   bottom: number;
+  /** Corner radius in CSS px, clamped to half the shorter side: a square at its half is a circle, a bar a pill. */
+  radius?: number;
+  /** An ellipse inscribed in the box instead of a rectangle. `radius` does not apply. */
+  shape?: "rect" | "ellipse";
+  /** Clockwise turn in degrees about the box's centre, as CSS `rotate()`. */
+  rotation?: number;
 };
 
 export type SurfaceFieldScene = {

@@ -342,7 +342,13 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
   let resting = false;
 
   // Click ripples: expanding rings that briefly lift the dots they cross.
-  type Footprint = { left: number; top: number; right: number; bottom: number };
+  /* A shape that is more than a plain box: its centre, half extents, corner
+     radius and turn, kept in the form every dot's measure reads directly. */
+  type ShapeGeo = { cx: number; cy: number; hx: number; hy: number; r: number; cos: number; sin: number; ellipse: boolean };
+  /* `left`..`bottom` are ALWAYS the axis-aligned box that holds the shape,
+     turned or not, so every repaint box, bin and overlap test stays a box
+     test. Only the measure below looks at `geo`. */
+  type Footprint = { left: number; top: number; right: number; bottom: number; geo?: ShapeGeo };
   type SelectedField = Footprint & { id: string; parent: string | null; weight: number; target: number; turning: boolean };
   const scene = new Map<string, SelectedField>();
   const activeFields: SelectedField[] = [];
@@ -371,11 +377,135 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     oldSceneBoxes.length = 0;
     return boxes;
   };
-  const fieldDistance2 = (x: number, y: number, shape: Footprint) => {
-    const dx = x < shape.left ? x - shape.left : x > shape.right ? x - shape.right : 0;
-    const dy = y < shape.top ? y - shape.top : y > shape.bottom ? y - shape.bottom : 0;
-    return dx * dx + dy * dy;
+  /* ═══ ONE MEASURE FOR EVERY SHAPE: A BOX, A ROUNDED BOX, AN ELLIPSE, TURNED ═══
+     .
+     Everything the field does around a surface reads two things from this:
+     how far a point is from the shape, and which way is out. The clearing
+     and the light take the EXACT distance (`gapX`, `gapY`, a vector as long
+     as the gap, zero inside). The push takes its own direction and distance
+     (`pushNX`, `pushNY`, `pushD`), which differ from the exact ones in one
+     place only: a SHARP corner, where the nearest-point direction turns
+     with a jump in curvature and folds every line crossing the extension of
+     a side. There the 4-norm of the outside distances stands in, whose
+     contours are rounded and whose normal turns with zero slope (see
+     `selectedPush`). A rounded corner or an ellipse is already smooth and
+     pushes along its true normal.
+     .
+     A TURN IS MEASURED IN THE SHAPE'S OWN FRAME: the point is turned back
+     about the centre, measured against an upright shape, and the result
+     turned forward again. So a rotated card clears, lights and bends
+     exactly like an upright one seen at an angle.
+     .
+     THE PLAIN BOX KEEPS ITS OLD ROAD. No `geo` is the case of almost every
+     surface on almost every frame, and it costs what it always cost. */
+  let gapX = 0, gapY = 0, pushNX = 0, pushNY = 0, pushD = 0;
+  const measure = (x: number, y: number, shape: Footprint) => {
+    const g = shape.geo;
+    let ex: number, ey: number, d: number, nx: number, ny: number;
+    if (!g) {
+      const dx = x < shape.left ? x - shape.left : x > shape.right ? x - shape.right : 0;
+      const dy = y < shape.top ? y - shape.top : y > shape.bottom ? y - shape.bottom : 0;
+      gapX = dx; gapY = dy;
+      const ax2 = dx * dx, ay2 = dy * dy;
+      pushD = Math.sqrt(Math.sqrt(ax2 * ax2 + ay2 * ay2));
+      const cx = ax2 * dx, cy = ay2 * dy;
+      const c = Math.sqrt(cx * cx + cy * cy);
+      if (c > 0) { pushNX = cx / c; pushNY = cy / c; } else pushNX = pushNY = 0;
+      return;
+    }
+    const dx = x - g.cx, dy = y - g.cy;
+    const qx = g.cos * dx + g.sin * dy;
+    const qy = g.cos * dy - g.sin * dx;
+    if (g.ellipse) {
+      /* The distance to an ellipse has no closed form. k0·(k0 − 1)/k1 is the
+         first-order one: exact on the ellipse and along both axes, and a few
+         percent long between them, which is inside the fade's own width. */
+      const ux = qx / g.hx, uy = qy / g.hy;
+      const k0 = Math.sqrt(ux * ux + uy * uy);
+      const gx = ux / g.hx, gy = uy / g.hy;
+      const k1 = Math.sqrt(gx * gx + gy * gy);
+      if (k0 <= 1 || k1 === 0) { gapX = gapY = pushNX = pushNY = pushD = 0; return; }
+      d = k0 * (k0 - 1) / k1;
+      ex = nx = gx / k1;
+      ey = ny = gy / k1;
+      pushD = d;
+    } else {
+      const ix = g.hx - g.r, iy = g.hy - g.r;
+      const ox = qx > ix ? qx - ix : qx < -ix ? qx + ix : 0;
+      const oy = qy > iy ? qy - iy : qy < -iy ? qy + iy : 0;
+      const len = Math.sqrt(ox * ox + oy * oy);
+      if (len <= g.r) { gapX = gapY = pushNX = pushNY = pushD = 0; return; }
+      d = len - g.r;
+      ex = ox / len;
+      ey = oy / len;
+      if (g.r > 0) { nx = ex; ny = ey; pushD = d; }
+      else {
+        const ax2 = ox * ox, ay2 = oy * oy;
+        pushD = Math.sqrt(Math.sqrt(ax2 * ax2 + ay2 * ay2));
+        const cx = ax2 * ox, cy = ay2 * oy;
+        const c = Math.sqrt(cx * cx + cy * cy);
+        nx = cx / c; ny = cy / c;
+      }
+    }
+    gapX = (g.cos * ex - g.sin * ey) * d;
+    gapY = (g.sin * ex + g.cos * ey) * d;
+    pushNX = g.cos * nx - g.sin * ny;
+    pushNY = g.sin * nx + g.cos * ny;
   };
+  const fieldDistance2 = (x: number, y: number, shape: Footprint) => {
+    if (!shape.geo) {
+      const dx = x < shape.left ? x - shape.left : x > shape.right ? x - shape.right : 0;
+      const dy = y < shape.top ? y - shape.top : y > shape.bottom ? y - shape.bottom : 0;
+      return dx * dx + dy * dy;
+    }
+    measure(x, y, shape);
+    return gapX * gapX + gapY * gapY;
+  };
+  /** A host's rectangle, moved by (ox, oy), as the engine keeps it; null when it is not a shape at all. */
+  const shapeOf = (rect: SurfaceFieldRect, ox: number, oy: number): Footprint | null => {
+    const { left, top, right, bottom } = rect;
+    if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(right) || !Number.isFinite(bottom) ||
+        right <= left || bottom <= top) return null;
+    const hx = (right - left) / 2, hy = (bottom - top) / 2;
+    const ellipse = rect.shape === "ellipse";
+    const r = ellipse ? 0 : Math.min(Math.max(0, Number.isFinite(rect.radius) ? rect.radius as number : 0), hx, hy);
+    const turn = Number.isFinite(rect.rotation) ? (rect.rotation as number) % 360 : 0;
+    if (!ellipse && r === 0 && turn === 0) return { left: left + ox, top: top + oy, right: right + ox, bottom: bottom + oy };
+    const cx = left + ox + hx, cy = top + oy + hy;
+    const a = turn * Math.PI / 180;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    /* The box that holds it: exact for a turned ellipse, and for a turned
+       rectangle the box of its corners, which a rounded one never exceeds. */
+    const ex = ellipse ? Math.sqrt(hx * hx * cos * cos + hy * hy * sin * sin) : Math.abs(cos) * hx + Math.abs(sin) * hy;
+    const ey = ellipse ? Math.sqrt(hx * hx * sin * sin + hy * hy * cos * cos) : Math.abs(sin) * hx + Math.abs(cos) * hy;
+    return { left: cx - ex, top: cy - ey, right: cx + ex, bottom: cy + ey, geo: { cx, cy, hx, hy, r, cos, sin, ellipse } };
+  };
+  /* The shape's outline as a path on `c`, for the clip that keeps the fabric
+     off a carried surface: the plain box as before, anything else as the
+     shape itself, so a round surface does not clear a square of lines. */
+  const traceShape = (c: Ctx, shape: Footprint) => {
+    const g = shape.geo;
+    if (!g) { c.rect(shape.left, shape.top, shape.right - shape.left, shape.bottom - shape.top); return; }
+    const turn = Math.atan2(g.sin, g.cos);
+    if (g.ellipse) { c.moveTo(g.cx + g.cos * g.hx, g.cy + g.sin * g.hx); c.ellipse(g.cx, g.cy, g.hx, g.hy, turn, 0, 2 * Math.PI); c.closePath(); return; }
+    const ix = g.hx - g.r, iy = g.hy - g.r;
+    const at = (lx: number, ly: number): [number, number] => [g.cx + g.cos * lx - g.sin * ly, g.cy + g.sin * lx + g.cos * ly];
+    /* Four corner arcs about the inner box's corners; each arc's end joins
+       the next arc's start with the straight side. */
+    const corners: [number, number, number][] = [[ix, -iy, -Math.PI / 2], [ix, iy, 0], [-ix, iy, Math.PI / 2], [-ix, -iy, Math.PI]];
+    const [sx, sy] = at(corners[3][0], corners[3][1] - g.r);
+    c.moveTo(sx, sy);
+    for (const [lx, ly, start] of corners) {
+      const [ax, ay] = at(lx, ly);
+      if (g.r > 0) c.arc(ax, ay, g.r, start + turn, start + turn + Math.PI / 2);
+      else c.lineTo(ax, ay);
+    }
+    c.closePath();
+  };
+  const sameShape = (a: Footprint, b: Footprint) =>
+    a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom &&
+    (a.geo === b.geo || (!!a.geo && !!b.geo && a.geo.r === b.geo.r && a.geo.cos === b.geo.cos &&
+      a.geo.sin === b.geo.sin && a.geo.ellipse === b.geo.ellipse && a.geo.hx === b.geo.hx && a.geo.hy === b.geo.hy));
   const indexScene = () => {
     bins.clear();
     broadFields.length = 0;
@@ -407,16 +537,16 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     const { x: ox, y: oy } = env.sceneOrigin(snapshot);
     const present = new Set<string>();
     for (const rect of rects) {
-      if (![rect.left, rect.top, rect.right, rect.bottom].every(Number.isFinite) || rect.right <= rect.left || rect.bottom <= rect.top) continue;
-      const left = rect.left + ox, top = rect.top + oy;
-      const right = rect.right + ox, bottom = rect.bottom + oy;
+      const shape = shapeOf(rect, ox, oy);
+      if (!shape) continue;
+      const { left, top, right, bottom, geo } = shape;
       if (right + focusRadius < 0 || bottom + focusRadius < 0 || left - focusRadius > width || top - focusRadius > height) continue;
       present.add(rect.id);
       let field = scene.get(rect.id);
       if (!field) {
-        field = { id: rect.id, parent: rect.parent, left, top, right, bottom, weight: 0, target: 1, turning: false };
+        field = { id: rect.id, parent: rect.parent, left, top, right, bottom, geo, weight: 0, target: 1, turning: false };
         scene.set(rect.id, field);
-      } else if (field.left !== left || field.top !== top || field.right !== right || field.bottom !== bottom) {
+      } else if (!sameShape(field, shape)) {
         if (field.weight > 0) oldSceneBoxes.push(fieldBox(field));
         field.turning = true;
       }
@@ -425,6 +555,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       field.top = top;
       field.right = right;
       field.bottom = bottom;
+      field.geo = geo;
     }
     for (const [id, field] of scene) if (!present.has(id)) {
       if (field.weight > 0) oldSceneBoxes.push(fieldBox(field));
@@ -1084,13 +1215,13 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
          wide or tall dragged element its actual footprint and soft edge. */
       let rdx = x - rp.x;
       let rdy = y - rp.y;
+      let rnx = 0, rny = 0;
       if (shapes) {
         let nearest2 = Infinity;
         for (const shape of shapes) {
-          const dx = x < shape.left ? x - shape.left : x > shape.right ? x - shape.right : 0;
-          const dy = y < shape.top ? y - shape.top : y > shape.bottom ? y - shape.bottom : 0;
-          const distance2 = dx * dx + dy * dy;
-          if (distance2 < nearest2) { nearest2 = distance2; rdx = dx; rdy = dy; }
+          measure(x, y, shape);
+          const distance2 = gapX * gapX + gapY * gapY;
+          if (distance2 < nearest2) { nearest2 = distance2; rdx = gapX; rdy = gapY; rnx = pushNX; rny = pushNY; }
           if (nearest2 === 0) break;
         }
       }
@@ -1109,15 +1240,13 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       wave += infl;
       if (rdist > 0.01 && ripplePush) {
         if (shapes) {
-          /* A RECTANGLE'S CREST PUSHES ALONG THE SQUIRCLE'S NORMAL, not the
-             nearest point's: see `selectedPush` below for why. Its crest
-             keeps the Euclidean distance, which is what the repaint boxes
-             were sized for; only the direction is smoothed. */
-          const cx = rdx * rdx * rdx;
-          const cy = rdy * rdy * rdy;
-          const push = infl * ripplePush / Math.sqrt(cx * cx + cy * cy);
-          px += cx * push;
-          py += cy * push;
+          /* A SHAPE'S CREST PUSHES ALONG THE PUSH'S OWN NORMAL, not the
+             nearest point's: see `measure` and `selectedPush` below for why.
+             Its crest keeps the exact distance, which is what the repaint
+             boxes were sized for; only the direction is smoothed. */
+          const push = infl * ripplePush;
+          px += rnx * push;
+          py += rny * push;
         } else {
           const push = (infl * ripplePush) / rdist; // outward, normalised
           px += rdx * push;
@@ -1132,9 +1261,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     for (const group of candidatesAt(x, y)) for (const field of group) {
       const weight = sourceWeight(field);
       if (weight <= 0) continue;
-      const dx = x < field.left ? x - field.left : x > field.right ? x - field.right : 0;
-      const dy = y < field.top ? y - field.top : y > field.bottom ? y - field.bottom : 0;
-      const d2 = dx * dx + dy * dy;
+      measure(x, y, field);
+      const d2 = gapX * gapX + gapY * gapY;
       if (d2 === 0 || d2 > rippleSupport * rippleSupport) continue;
       /* ═══ A SURFACE LIFTS THE FABRIC ALONG A SQUIRCLE, NOT A RECTANGLE ═══
          .
@@ -1151,18 +1279,13 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
          Euclidean distance, so the cutoff above stays the Euclidean one:
          the repaint boxes were sized for it, and at 4 widths what the
          diagonal loses is a tenth of a pixel. */
-      const ax2 = dx * dx;
-      const ay2 = dy * dy;
-      const q2 = Math.sqrt(ax2 * ax2 + ay2 * ay2); // squared 4-norm
-      const profile = Math.exp(-q2 / (2 * rippleWidth * rippleWidth));
+      const profile = Math.exp(-(pushD * pushD) / (2 * rippleWidth * rippleWidth));
       const edge = profile * weight;
       selectedWave = Math.max(selectedWave, edge);
       if (d2 > 0.0001 && ripplePush) {
-        const cx = ax2 * dx;
-        const cy = ay2 * dy;
-        const scale = edge * ripplePush / Math.sqrt(cx * cx + cy * cy);
-        selectedPushX += cx * scale;
-        selectedPushY += cy * scale;
+        const scale = edge * ripplePush;
+        selectedPushX += pushNX * scale;
+        selectedPushY += pushNY * scale;
       }
     }
     /* NEIGHBOURS SATURATE, THEY DO NOT CLIP. Two surfaces facing each other
@@ -1392,7 +1515,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     if (focusShapes && focusShapeWeight >= 1 - 1e-6) for (const shape of focusShapes) {
       fabricCtx.beginPath();
       fabricCtx.rect(0, 0, width, height);
-      fabricCtx.rect(shape.left, shape.top, shape.right - shape.left, shape.bottom - shape.top);
+      traceShape(fabricCtx, shape);
       fabricCtx.clip("evenodd");
     }
     fabricCtx.lineCap = "round";
@@ -1569,8 +1692,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       lastFabricShapes.length !== (focusShapes?.length ?? 0) ||
       lastFabricShapes.some((shape, i) => {
         const next = focusShapes?.[i];
-        return !next || shape.left !== next.left || shape.top !== next.top ||
-          shape.right !== next.right || shape.bottom !== next.bottom;
+        return !next || !sameShape(shape, next);
       });
     if (shapeChanged) {
       const shapePad = edgeWidth + step;
@@ -1598,8 +1720,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         changedFields.set(field.id, pair);
       }
       for (const { old, next } of changedFields.values()) {
-        if (old?.weight === next?.weight && old?.rect.left === next?.rect.left && old?.rect.top === next?.rect.top &&
-            old?.rect.right === next?.rect.right && old?.rect.bottom === next?.rect.bottom) continue;
+        if (old?.weight === next?.weight && old && next && sameShape(old.rect, next.rect)) continue;
         const shapePad = edgeWidth + step + 2;
         const before = old && old.weight > 0 ? old.rect : undefined;
         const after = next && next.weight > 0 ? next.rect : undefined;
@@ -2565,15 +2686,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     pressCanvasBox = null;
     const footprints: Footprint[] = [];
     for (const rect of rects) {
-      if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) ||
-          !Number.isFinite(rect.right) || !Number.isFinite(rect.bottom) ||
-          rect.right <= rect.left || rect.bottom <= rect.top) continue;
-      footprints.push({
-        left: rect.left - footprintBox.left,
-        top: rect.top - footprintBox.top,
-        right: rect.right - footprintBox.left,
-        bottom: rect.bottom - footprintBox.top,
-      });
+      const shape = shapeOf(rect, -footprintBox.left, -footprintBox.top);
+      if (shape) footprints.push(shape);
     }
     if (!footprints.length) return;
     /* AN EQUAL FOOTPRINT IS NO NEWS, and it keeps the objects the last held
@@ -2581,10 +2695,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
        surface (`renderHeld`). A host that repeats itself costs nothing. */
     if (ring.footprints && ring.source === source && sameIds(ring.ids, ids) &&
         ring.footprints.length === footprints.length &&
-        ring.footprints.every((shape, i) => {
-          const next = footprints[i];
-          return shape.left === next.left && shape.top === next.top && shape.right === next.right && shape.bottom === next.bottom;
-        })) return;
+        ring.footprints.every((shape, i) => sameShape(shape, footprints[i]))) return;
     if (!ring.footprints) ring.footprintAt = env.now();
     ring.source = source;
     ring.ids = ids;
@@ -2609,7 +2720,9 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     /* The pointer observer already measured this canvas in capture before
        the board's preview frame. A preview costs no second layout read. */
     const box = canvasBox ?? env.box();
-    const shape = { left: rect.left - box.left, top: rect.top - box.top,
+    /* A zero-size preview is still a place (a click that has not dragged
+       yet); only a real area can carry a shape. */
+    const shape = shapeOf(rect, -box.left, -box.top) ?? { left: rect.left - box.left, top: rect.top - box.top,
       right: rect.right - box.left, bottom: rect.bottom - box.top };
     if (preview) {
       if (!preview.target) lastPreviewFrameAt = env.now();

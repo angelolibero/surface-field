@@ -53,4 +53,16 @@ Create a controller once for each field instance and pass it as `controller`. It
 | `refreshTheme()` | Rereads inherited color and accent, then repaints even if the motion loop is asleep. |
 | `setViewport({ x, y, zoom })` | Same meaning as the `viewport` prop. Retained like the scene and replayed on attachment. After the first call the controller owns the camera and the prop is ignored for that field. Calls within one frame coalesce into one repaint. |
 
+### Shapes
+
+Every rectangle above, in the scene, a footprint or a preview, may say what the surface is besides its box. Without these fields it is a plain rectangle, as before.
+
+| Field | Meaning |
+| --- | --- |
+| `radius` | Corner radius in CSS pixels, clamped to half the shorter side. A square at half its side is a circle, a bar a pill. Pass the card's own `border-radius` so the clearing matches its corners. |
+| `shape: "ellipse"` | An ellipse inscribed in the box instead of a rectangle. `radius` does not apply. |
+| `rotation` | Clockwise turn in degrees about the box's centre, as CSS `rotate()`. `left`..`bottom` stay the box before the turn, which is what layout reports as the element's size. |
+
+The clearing, the light, the push on dots and lines and the carried surface's fabric clip all follow the shape. A plain rectangle keeps its original, cheapest path.
+
 The controller and field do not inspect a host's object model. Invalid or empty rectangles are ignored by the renderer. Keep an interaction root and its scene root mounted while sending updates.
