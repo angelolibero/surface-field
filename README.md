@@ -63,6 +63,14 @@ Create one controller per mounted field. Keep its identity stable across renders
 
 React Flow: use the field as the flow's background with [`examples/react-flow`](examples/react-flow/), which forwards the camera and node boxes to the controller.
 
+To draw off the main thread, pass a factory for the package's worker. The field hands its canvases to it as OffscreenCanvases and falls back to the main thread where that is not available. With Vite:
+
+```tsx
+import FieldWorker from "surface-field/worker?worker";
+
+<SurfaceField worker={() => new FieldWorker()} />;
+```
+
 Use `surfacePadding` to adjust the fade around scene and carried surfaces in CSS pixels. Its default `0` preserves the existing spacing; positive values widen the empty band and negative values narrow it. The surface interior stays clear.
 
 ## Develop

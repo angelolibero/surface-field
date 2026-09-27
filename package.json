@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/field.worker.d.ts",
+      "import": "./dist/field.worker.js"
     }
   },
   "files": ["dist", "README.md", "LICENSE", "docs"],
