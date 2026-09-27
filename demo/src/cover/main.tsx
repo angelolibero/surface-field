@@ -11,18 +11,26 @@ import "./cover.css";
    stage: `npm run demo`, open /surface-field/cover.html, and a headless
    Chrome at device scale 2 takes the picture. Nothing here ships. ── */
 
-type Node = { id: string; left: number; top: number; width: number; height: number; kind: string; title: string };
+type Node = { id: string; left: number; top: number; width: number; height: number; kind: string; title: string; rotation?: number };
 
 const nodes: Node[] = [
   { id: "source", left: 830, top: 330, width: 260, height: 132, kind: "Source", title: "Live page" },
   { id: "stream", left: 1210, top: 150, width: 250, height: 132, kind: "Stream", title: "Capture" },
   { id: "layout", left: 1210, top: 560, width: 250, height: 132, kind: "Layout", title: "Measure" },
-  { id: "notes", left: 860, top: 650, width: 190, height: 110, kind: "Note", title: "Draft" },
+  { id: "notes", left: 850, top: 640, width: 190, height: 110, kind: "Note", title: "Draft", rotation: -8 },
 ];
 
-/* A handle sits on the middle of a side, as React Flow's default does. */
-const out = (n: Node) => [n.left + n.width, n.top + n.height / 2] as const;
-const into = (n: Node) => [n.left, n.top + n.height / 2] as const;
+/* A handle sits on the middle of a side, as React Flow's default does, and
+   turns with its node about the node's centre. */
+const turned = (n: Node, x: number, y: number) => {
+  const a = (n.rotation ?? 0) * Math.PI / 180;
+  const cx = n.left + n.width / 2, cy = n.top + n.height / 2;
+  return [cx + Math.cos(a) * (x - cx) - Math.sin(a) * (y - cy), cy + Math.sin(a) * (x - cx) + Math.cos(a) * (y - cy)] as const;
+};
+const out = (n: Node) => turned(n, n.left + n.width, n.top + n.height / 2);
+const into = (n: Node) => turned(n, n.left, n.top + n.height / 2);
+/* The one node held in the hand: selected and mid-turn, as in the playground. */
+const HELD = "notes";
 
 /* React Flow's smoothstep: across to the middle, down, across again, every
    turn rounded. 14 is its default border radius at this stroke. */
@@ -60,9 +68,12 @@ function Cover() {
   React.useLayoutEffect(() => {
     const root = stage.current;
     if (!root) return;
+    /* The field is told the radius the cards wear and the held one's turn. */
+    const card = root.querySelector<HTMLElement>(".cover-node");
+    const radius = card ? parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0 : 0;
     controller.setScene({
       root,
-      rects: nodes.map(n => ({ id: n.id, parent: null, left: n.left, top: n.top, right: n.left + n.width, bottom: n.top + n.height })),
+      rects: nodes.map(n => ({ id: n.id, parent: null, left: n.left, top: n.top, right: n.left + n.width, bottom: n.top + n.height, radius, rotation: n.rotation })),
     });
     /* The light rests where the graph is, as if a hand had just left it. */
     const aim = () => window.dispatchEvent(new PointerEvent("pointermove", { clientX: 1150, clientY: 440, pointerType: "mouse" }));
@@ -81,13 +92,28 @@ function Cover() {
     <svg className="cover-edges" viewBox="0 0 1600 900" aria-hidden="true">
       {edges.map(e => <path key={e.from + e.to} d={step(out(byId[e.from]), into(byId[e.to]))} className={e.dashed ? "dashed" : undefined} />)}
     </svg>
-    {nodes.map(n => <SurfaceCard key={n.id} className="cover-node" style={{ left: n.left, top: n.top, width: n.width, height: n.height }}>
-      <span className="cover-grip" />
+    {nodes.map(n => <SurfaceCard key={n.id} className="cover-node" style={{ left: n.left, top: n.top, width: n.width, height: n.height, transform: n.rotation ? `rotate(${n.rotation}deg)` : undefined }}>
       <small>{n.kind}</small>
       <strong>{n.title}</strong>
       <span className="cover-handle in" />
       <span className="cover-handle out" />
     </SurfaceCard>)}
+    {(() => {
+      const n = byId[HELD];
+      return <div className="selection cover-selection" style={{ left: n.left, top: n.top, width: n.width, height: n.height, transform: `rotate(${n.rotation ?? 0}deg)` }}>
+        {[[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) => <span key={`${x}${y}`} className="sel-corner" style={{ left: `${x * 100}%`, top: `${y * 100}%` }} />)}
+        {/* The playground's turn cursor, drawn at the size a cover reads. */}
+        <svg className="cover-turn" viewBox="0 0 32 32" aria-hidden="true">
+          {/* The top-right corner's turn: the arc bows out toward that corner. */}
+          <g transform="rotate(90 16 16)">
+            <path className="halo arc" d="M9 23A13 13 0 0 1 22 10" />
+            <g className="halo heads"><path d="M9 28.5 5.25 23h7.5z" /><path d="M27.5 10 22 6.25v7.5z" /></g>
+            <path className="ink arc" d="M9 23A13 13 0 0 1 22 10" />
+            <g className="ink heads"><path d="M9 28.5 5.25 23h7.5z" /><path d="M27.5 10 22 6.25v7.5z" /></g>
+          </g>
+        </svg>
+      </div>;
+    })()}
 
     <header className="cover-top">
       <span className="cover-mark" aria-hidden="true">
