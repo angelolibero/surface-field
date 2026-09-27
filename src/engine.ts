@@ -2293,8 +2293,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
      BACK WHEN THE DRAWING STOPS, not in a quarter of a minute, measured. At
      workspace size that is one live and four cached 2130 by 1698 textures
      per canvas, fourteen megabytes each: 138 MB for the dots and the fabric
-     of a table nobody is touching, and as much again in the GPU process
-     (`docs/audits/2026-09-26-cpu-vs-chrome.md`, cost 6).
+     of a field nobody is touching, and as much again in the GPU process.
      .
      A NEW SIZE IS THE ONE HANDLE A PAGE HAS ON THEM. Writing the same width
      back keeps the old backing store, measured; a different one throws it
@@ -2319,7 +2318,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
      memory it waits on was held for ever before. A field that breathes
      paints every 45 ms and never gets here: its pipe is in use. A carry is
      left alone, because the hand is still holding the light.
-     (render-check/engine-lab/field-memory: 138 MB to 27.6 at rest.) */
+     (Measured at rest: 138 MB down to 27.6.) */
   const TRIM_IDLE_MS = 4000;
   let lastPaintAt = 0;
   const trimLater = () => {
