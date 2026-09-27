@@ -1,64 +1,42 @@
 import * as React from "react";
 import {
-  Controls, Handle, MiniMap, NodeResizeControl, Position, ReactFlow, ReactFlowProvider, addEdge, useEdgesState, useNodesState, useReactFlow, useStoreApi,
+  Controls, Handle, MiniMap, NodeResizer, Position, ReactFlow, ReactFlowProvider, addEdge, useEdgesState, useNodesState, useStoreApi,
   type Connection, type Edge, type FitViewOptions, type Node, type NodeProps, type NodeTypes, type ReactFlowState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { SurfaceField, createSurfaceFieldController, type SurfaceFieldController, type SurfaceFieldRect } from "surface-field";
 import { FieldWorkspace, type Config, type FieldSettings } from "./FieldControls";
-import { SurfaceCard, SurfaceHandle, arrowStep, type HandleMode } from "./SurfaceCard";
+import { SurfaceCard } from "./SurfaceCard";
 
 /* ── The graph. What sits inside a node does not matter here: a card with a
    title is enough to show the field following React Flow's camera. A node IS
-   a playground surface, the React Flow way: the same card and the same two
-   handles, the grip as the node's `dragHandle` and the corner as the child of
-   a NodeResizeControl. Arrow keys on a handle do what they do in the playground. ── */
+   a playground surface, the React Flow way: the same empty-handed card, dragged
+   by its body, and when selected React Flow's own NodeResizer draws the box,
+   the corners and the edges that resize it. No turn: React Flow's nodes are
+   upright boxes. The arrow keys move a selected node, which React Flow does
+   on its own. ── */
 
 type SurfaceNodeData = { title: string; kind: string };
 type SurfaceNode = Node<SurfaceNodeData, "surface">;
 
-/* The smallest card that holds its kind and a one-line title under the grip,
-   and keeps the right connect handle clear of the resize corner: 84 is the
-   36px corner, the 10px handle centred, and the corner again above it. */
-const minSize = { width: 120, height: 84 };
+/* The smallest card that still holds its kind and a one-line title. */
+const minSize = { width: 120, height: 64 };
 
-function SurfaceNodeCard({ id, data }: NodeProps<SurfaceNode>) {
-  const flow = useReactFlow<SurfaceNode>();
-  /* The playground steps 12 SCREEN px, so a step here is divided by the zoom. */
-  const onKey = (mode: HandleMode, event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const step = arrowStep(event);
-    if (!step) return;
-    event.preventDefault();
-    /* React Flow's node would also move the selection on the same key. */
-    event.stopPropagation();
-    const zoom = flow.getZoom();
-    const [dx, dy] = [step[0] / zoom, step[1] / zoom];
-    flow.updateNode(id, current => mode === "move"
-      ? { position: { x: current.position.x + dx, y: current.position.y + dy } }
-      : {
-        width: Math.max(minSize.width, (current.width ?? current.measured?.width ?? minSize.width) + dx),
-        height: Math.max(minSize.height, (current.height ?? current.measured?.height ?? minSize.height) + dy),
-      });
-  };
+function SurfaceNodeCard({ data, selected }: NodeProps<SurfaceNode>) {
   return <SurfaceCard className="flow-node">
-    <SurfaceHandle mode="move" name={data.title} onKeyDown={event => onKey("move", event)} />
+    <NodeResizer isVisible={selected} minWidth={minSize.width} minHeight={minSize.height} lineClassName="flow-resize-line" handleClassName="flow-resize-handle" />
     <Handle type="target" position={Position.Left} />
     <span className="flow-node-kind">{data.kind}</span>
     <strong className="flow-node-title">{data.title}</strong>
     <Handle type="source" position={Position.Right} />
-    <NodeResizeControl
-      position="bottom-right" className="surface-resize-control" autoScale={false}
-      minWidth={minSize.width} minHeight={minSize.height}
-    ><SurfaceHandle mode="resize" name={data.title} onKeyDown={event => onKey("resize", event)} /></NodeResizeControl>
   </SurfaceCard>;
 }
 
 const nodeTypes: NodeTypes = { surface: SurfaceNodeCard };
 
-/* A resizable node needs a size of its own to start from; the card fills it.
-   Only the grip drags it, as only the grip moves a playground surface. */
+/* A resizable node needs a size of its own to start from; the card fills it. */
 const node = (id: string, x: number, y: number, title: string, kind: string): SurfaceNode =>
-  ({ id, type: "surface", position: { x, y }, width: 184, height: minSize.height, dragHandle: ".move-handle", data: { title, kind } });
+  ({ id, type: "surface", position: { x, y }, width: 184, height: 72, data: { title, kind } });
 
 const initialNodes: SurfaceNode[] = [
   node("source", 0, 150, "Live page", "Source"),
@@ -89,7 +67,7 @@ const initialEdges: Edge[] = [
 type SceneRect = SurfaceFieldRect & { id: string; parent: string | null };
 
 /** World box to root-relative screen box: the same transform React Flow draws with. */
-function sceneRects(state: ReactFlowState, only?: (node: { dragging?: boolean; resizing?: boolean }) => boolean): SceneRect[] {
+function sceneRects(state: ReactFlowState, radius: number, only?: (node: { dragging?: boolean; resizing?: boolean }) => boolean): SceneRect[] {
   const [x, y, zoom] = state.transform;
   const rects: SceneRect[] = [];
   for (const item of state.nodeLookup.values()) {
@@ -100,6 +78,7 @@ function sceneRects(state: ReactFlowState, only?: (node: { dragging?: boolean; r
       id: item.id, parent: null,
       left: p.x * zoom + x, top: p.y * zoom + y,
       right: (p.x + width) * zoom + x, bottom: (p.y + height) * zoom + y,
+      radius: radius * zoom || undefined,
     });
   }
   return rects;
@@ -107,7 +86,7 @@ function sceneRects(state: ReactFlowState, only?: (node: { dragging?: boolean; r
 
 const sameRects = (a: readonly SceneRect[], b: readonly SceneRect[]) =>
   a.length === b.length && a.every((r, i) => r.id === b[i].id && r.left === b[i].left &&
-    r.top === b[i].top && r.right === b[i].right && r.bottom === b[i].bottom);
+    r.top === b[i].top && r.right === b[i].right && r.bottom === b[i].bottom && r.radius === b[i].radius);
 
 function FieldBridge({ controller, root }: {
   controller: SurfaceFieldController; root: React.RefObject<HTMLDivElement | null>;
@@ -119,13 +98,13 @@ function FieldBridge({ controller, root }: {
     let viewport = { x: NaN, y: NaN, zoom: NaN };
     let scene: SceneRect[] = [];
     let first = true;
-    /* A press on a node's grip or corner is a handle gesture, as in the
+    /* A press on a node's body or its resize frame holds the card, as in the
        playground: the footprint says so with `suppressRipple`, from the
        press itself, so the field lays no ring under a card being moved or
-       resized. The clearing follows through the scene, which a resize
-       changes in the same store update that sizes the card. The pointer
-       that pressed is the bridge's to remember: neither React Flow's drag
-       nor NodeResizeControl exposes it. */
+       resized. A press on a connection dot is not a hold. The clearing
+       follows through the scene, which a resize changes in the same store
+       update that sizes the card. The pointer that pressed is the bridge's
+       to remember: neither React Flow's drag nor NodeResizer exposes it. */
     let press: { pointerId: number; box: DOMRect; initial: boolean; handle: boolean } | null = null;
 
     const footprint = (rects: readonly SceneRect[]) => {
@@ -138,31 +117,41 @@ function FieldBridge({ controller, root }: {
         suppressRipple: press.handle || undefined,
         rects: rects.map(rect => ({
           left: box.left + rect.left, top: box.top + rect.top,
-          right: box.left + rect.right, bottom: box.top + rect.bottom,
+          right: box.left + rect.right, bottom: box.top + rect.bottom, radius: rect.radius,
         })),
       });
       press.initial = false;
     };
 
+    /* The radius the cards wear, read off the first one mounted; it is a token
+       and does not change with the zoom, which the rects apply. */
+    let radius = 0;
+    const cardRadius = () => {
+      if (!radius) {
+        const card = element.querySelector<HTMLElement>(".flow-node");
+        if (card) radius = parseFloat(getComputedStyle(card).borderTopLeftRadius) || 0;
+      }
+      return radius;
+    };
     const sync = (state: ReactFlowState) => {
       const [x, y, zoom] = state.transform;
       if (x !== viewport.x || y !== viewport.y || zoom !== viewport.zoom) {
         viewport = { x, y, zoom };
         controller.setViewport(viewport);
       }
-      const next = sceneRects(state);
+      const next = sceneRects(state, cardRadius());
       if (first || !sameRects(next, scene)) {
         first = false;
         scene = next;
         controller.setScene({ root: element, rects: scene });
       }
-      if (press) footprint(sceneRects(state, item => Boolean(item.dragging || item.resizing)));
+      if (press) footprint(sceneRects(state, cardRadius(), item => Boolean(item.dragging || item.resizing)));
     };
 
     const onDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
       const target = event.target instanceof Element ? event.target : null;
-      const nodeId = target?.closest(".move-handle, .surface-resize-control")
+      const nodeId = target && !target.closest(".react-flow__handle")
         ? target.closest<HTMLElement>(".react-flow__node")?.dataset.id : undefined;
       press = { pointerId: event.pointerId, box: element.getBoundingClientRect(), initial: true, handle: Boolean(nodeId) };
       if (nodeId) footprint(scene.filter(rect => rect.id === nodeId));

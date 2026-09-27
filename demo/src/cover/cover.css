@@ -14,16 +14,8 @@ html, body { margin: 0; height: 900px; overflow: hidden; background: var(--backg
 .cover-node { position: absolute; z-index: 3; box-sizing: border-box; padding: 34px 24px 20px; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
 .cover-node small { color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .cover-node strong { font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 21px; font-weight: 700; letter-spacing: -0.03em; }
-/* The held node's selection stands above the cards; its turn cursor sits just
-   past the top-right corner, where the hand would be to rotate it. */
+/* The held node's selection stands above the cards. */
 .cover-selection { z-index: 4; }
-.cover-turn { position: absolute; left: calc(100% + 2px); top: -40px; width: 38px; height: 38px; overflow: visible; }
-/* The same outline all round: 1.25px of paper outside the ink, arc and heads alike. */
-.cover-turn .arc { fill: none; }
-.cover-turn .halo.arc { stroke: var(--background); stroke-width: 4.5; }
-.cover-turn .halo.heads { fill: var(--background); stroke: var(--background); stroke-width: 2.5; stroke-linejoin: round; }
-.cover-turn .ink.arc { stroke: var(--foreground); stroke-width: 2; }
-.cover-turn .ink.heads { fill: var(--foreground); }
 .cover-handle { position: absolute; top: 50%; width: 11px; height: 11px; margin-top: -5.5px; box-sizing: border-box; border: 1.5px solid color-mix(in oklab, var(--foreground) 34%, transparent); border-radius: 50%; background: var(--card-face); }
 .cover-handle.in { left: -6.5px; }
 .cover-handle.out { right: -6.5px; }

@@ -351,16 +351,6 @@ button:not(.segmented-option), input { font: inherit; }
 .sel-turn[data-side="ne"] { left: calc(100% + 2px); top: -22px; }
 .sel-turn[data-side="se"] { left: calc(100% + 2px); top: calc(100% + 2px); }
 .sel-turn[data-side="sw"] { left: -22px; top: calc(100% + 2px); }
-.object-handle { position: absolute; z-index: 1; display: grid; place-items: center; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted-foreground); padding: 0; touch-action: none; opacity: .72; transition: opacity 120ms ease, color 120ms ease; }
-.surface-card:hover .object-handle, .surface-card:focus-within .object-handle, .object-handle:hover { opacity: .86; }
-.surface-card .object-handle:hover, .surface-card .object-handle:focus-visible { color: var(--foreground); opacity: 1; }
-.object-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; border-radius: 7px; }
-.handle-mark { position: relative; display: block; pointer-events: none; }
-.move-handle { top: 0; left: 50%; transform: translateX(-50%); cursor: grab; }
-.move-handle .handle-mark { width: 18px; height: 2px; border-radius: 2px; background: currentColor; }
-.move-handle:active { cursor: grabbing; }
-.resize-handle { bottom: 0; right: 0; cursor: nwse-resize; }
-.resize-handle .handle-mark { width: 16px; height: 16px; }
 .viewport-credit { position: absolute; z-index: 4; right: 24px; bottom: 18px; display: flex; align-items: baseline; gap: 7px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; text-shadow: 0 1px 2px var(--background), 0 -1px 2px var(--background); }
 .viewport-credit a { display: inline-flex; align-items: center; color: inherit; text-decoration: none; }
 .viewport-credit a:hover { color: var(--foreground); }
@@ -479,13 +469,18 @@ button:not(.segmented-option), input { font: inherit; }
 
 /* The card is the playground's; only its content is the graph's. The top
    padding keeps the kind line under the grip's 36px, not beside it. */
-.flow-node { position: relative; box-sizing: border-box; width: 100%; height: 100%; padding: 28px 18px 14px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.flow-node { position: relative; box-sizing: border-box; width: 100%; height: 100%; padding: 14px 18px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
 /* Selection is a ring OUTSIDE the plate, in the ink and never a hue: the
    field is the only thing on this page that is coloured, and a selected card
    is a state of the card, not a new object. */
 .flow-node { --selection: 0 0 0 0 transparent; }
-.react-flow__node.selected .flow-node { --selection: 0 0 0 1.5px color-mix(in oklab, var(--foreground) 55%, transparent), 0 0 0 5px color-mix(in oklab, var(--foreground) 7%, transparent); }
-/* Only the grip carries a card, so only the grip says grab, as in the playground. */
+/* A selected node shows React Flow's own resize frame, drawn like the
+   playground's selection: a fine line in the ink and square corners on paper. */
+.flow-node .react-flow__resize-control.line.flow-resize-line { border-color: color-mix(in oklab, var(--foreground) 62%, transparent); border-width: 0; }
+.flow-node .react-flow__resize-control.line.flow-resize-line.top, .flow-node .react-flow__resize-control.line.flow-resize-line.bottom { border-top-width: 1.5px; }
+.flow-node .react-flow__resize-control.line.flow-resize-line.left, .flow-node .react-flow__resize-control.line.flow-resize-line.right { border-left-width: 1.5px; }
+.flow-node .react-flow__resize-control.handle.flow-resize-handle { width: 9px; height: 9px; border: 1.5px solid color-mix(in oklab, var(--foreground) 62%, transparent); border-radius: 2px; background: var(--card-face); }
+/* A card is carried by its body, as a layer on a canvas is: the arrow, not a hand. */
 .flow-canvas .react-flow__node.draggable { cursor: default; }
 .react-flow__node:focus-visible { outline: none; }
 .react-flow__node:focus-visible .flow-node { outline: 2px solid var(--ring); outline-offset: 3px; }
@@ -495,7 +490,6 @@ button:not(.segmented-option), input { font: inherit; }
    handle is a 5px dot centred ON the corner, and this puts it back inside the
    card, 36px square, so the button it holds lands where the playground's does.
    Five classes because base.css places the corner with four. */
-.flow-canvas .flow-node .react-flow__resize-control.handle.surface-resize-control { z-index: 1; top: auto; left: auto; right: 0; bottom: 0; width: 36px; height: 36px; border: 0; border-radius: 0; background: transparent; translate: none; }
 .flow-node .react-flow__handle { width: 10px; height: 10px; border: 1.5px solid color-mix(in oklab, var(--foreground) 32%, transparent); border-radius: 50%; background: var(--card-face); transition: border-color 120ms ease, background-color 120ms ease; }
 .flow-node .react-flow__handle:hover, .flow-node .react-flow__handle.connectingfrom, .flow-node .react-flow__handle.valid { border-color: color-mix(in oklab, var(--foreground) 70%, transparent); background: color-mix(in oklab, var(--foreground) 14%, var(--card-face)); }
 
