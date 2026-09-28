@@ -4,7 +4,7 @@ import {
   type Connection, type Edge, type FitViewOptions, type Node, type NodeProps, type NodeTypes, type ReactFlowState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { SurfaceField, createSurfaceFieldController, type SurfaceFieldController, type SurfaceFieldRect } from "surface-field";
+import { SurfaceField, createSurfaceFieldController, type SurfaceFieldController, type SurfaceFieldLink, type SurfaceFieldRect } from "surface-field";
 import { FieldWorkspace, type Config, type FieldSettings } from "./FieldControls";
 import { SurfaceCard } from "./SurfaceCard";
 
@@ -161,9 +161,38 @@ function FieldBridge({ controller, root }: {
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", onUp, true);
     sync(store.getState());
-    const unsubscribe = store.subscribe(sync);
+    /* ═══ EVERY EDGE IS ALSO A CHANNEL IN THE FIELD ═══
+       The channel follows the edge's own drawn path, read off its SVG after
+       React Flow has laid it out: sampled every 14 screen pixels into the
+       scene root's coordinates. An animated edge carries a moving crest.
+       Read once per frame at most, and only after the store changed. */
+    let linkFrame = 0;
+    const sendLinks = () => {
+      linkFrame = 0;
+      const box = element.getBoundingClientRect();
+      const links: SurfaceFieldLink[] = [];
+      for (const edge of element.querySelectorAll<SVGGElement>(".react-flow__edge")) {
+        const path = edge.querySelector<SVGPathElement>(".react-flow__edge-path");
+        const matrix = path?.getScreenCTM();
+        if (!path || !matrix) continue;
+        const length = path.getTotalLength();
+        const zoom = Math.hypot(matrix.a, matrix.b) || 1;
+        const count = Math.max(2, Math.ceil(length * zoom / 14));
+        const points = Array.from({ length: count + 1 }, (_, i) => {
+          const p = path.getPointAtLength(length * i / count).matrixTransform(matrix);
+          return { x: p.x - box.left, y: p.y - box.top };
+        });
+        links.push({ points, width: 16, motion: edge.classList.contains("animated") ? "loop" : "still" });
+      }
+      controller.setLinks(links);
+    };
+    const queueLinks = () => { if (!linkFrame) linkFrame = requestAnimationFrame(sendLinks); };
+    const unsubscribe = store.subscribe(state => { sync(state); queueLinks(); });
+    queueLinks();
     return () => {
       unsubscribe();
+      cancelAnimationFrame(linkFrame);
+      controller.setLinks(null);
       element.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);

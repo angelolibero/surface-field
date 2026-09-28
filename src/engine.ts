@@ -1,4 +1,4 @@
-import type { SurfaceFieldFootprint, SurfaceFieldPreview, SurfaceFieldRect } from "./controller.js";
+import type { SurfaceFieldFootprint, SurfaceFieldLink, SurfaceFieldPreview, SurfaceFieldRect } from "./controller.js";
 import { advanceLattice, normalizeViewport, pickZoomAnchor, sameLattice, sameViewport, seedLattice, zoomFixedPoint, type SurfaceFieldLattice, type SurfaceFieldViewport } from "./viewport.js";
 
 /**
@@ -60,7 +60,8 @@ export type SurfaceFieldEngineSignal =
   | { kind: "footprint"; value: SurfaceFieldFootprint }
   | { kind: "preview"; value: SurfaceFieldPreview }
   | { kind: "theme" }
-  | { kind: "viewport"; value: SurfaceFieldViewport };
+  | { kind: "viewport"; value: SurfaceFieldViewport }
+  | { kind: "links"; value: readonly SurfaceFieldLink[] | null };
 /** An HTMLCanvasElement or an OffscreenCanvas; the engine only sizes it and draws on it. */
 export type SurfaceFieldCanvas = { width: number; height: number; getContext(kind: "2d"): unknown };
 
@@ -506,6 +507,235 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     a.left === b.left && a.top === b.top && a.right === b.right && a.bottom === b.bottom &&
     (a.geo === b.geo || (!!a.geo && !!b.geo && a.geo.r === b.geo.r && a.geo.cos === b.geo.cos &&
       a.geo.sin === b.geo.sin && a.geo.ellipse === b.geo.ellipse && a.geo.hx === b.geo.hx && a.geo.hy === b.geo.hy));
+
+  /* ═══ A LINK IS A CHANNEL IN THE FIELD, NOT A LINE DRAWN OVER IT ═══════════
+     .
+     Two surfaces that belong together are joined by the fabric itself: along
+     the path the dots part a little and lift, the way they do round a
+     surface, on a band a few dots wide. Nothing is stroked. A line would be a
+     second drawing on top of the field; this is the field saying it.
+     .
+     TWO WIDTHS, BECAUSE THE LATTICE HAS ONE. The LIGHT is as narrow as the
+     host asks: the dots within the width lift, a vein a dot or two across.
+     The PARTING cannot be: a push narrower than the spacing moves one row of
+     dots and not its neighbours, and the rows crossing the path zigzag. So
+     the push spreads over at least one spacing, and is a derivative, not a
+     bump: (d/σ)·e^(½ − d²/2σ²) is zero ON the line, peaks at σ and dies by
+     three, so the dots on the path stay put, their neighbours step aside, and
+     a row crossing it bends instead of breaking. It is a third of the width
+     and never more than a fifth of the spacing, so a channel shades the
+     lattice without tearing it.
+     .
+     A MOVING LINK CARRIES A CREST, the release ripple's gaussian travelling
+     along the path instead of out from a rectangle. At rest the channel keeps
+     a third of its lift, so a moving link reads as a pulse along a vein and
+     a still one as the vein alone.
+     .
+     WHAT IT COSTS. A dot measures a link only inside the link's padded box,
+     so a field without links, or a dot far from every one, pays one length
+     test. A still link is drawn with everything else and never asks for a
+     frame. A moving one keeps the loop awake, but each frame repaints only
+     the crest's own box, before and after, never the canvas. */
+  const LINK_WIDTH = 16;
+  const LINK_SPEED = 160; // px/s: a 400px edge in two and a half seconds
+  const LINK_CREST = 44; // px, the crest's gaussian width along the path
+  const LINK_SAMPLES = 32; // a default curve, walked in this many chords
+  const LINK_LIFT = 0.55; // a still channel's share of the ripple's lift
+  const LINK_OVER = 0.8; // how far above the peak a vein's centre may rise
+  /* A crest is a soft glow moving 160px a second: 25 steps a second move it
+     six pixels, against a glow 88px long, which reads as motion and not as
+     steps, for a fifth of the 120Hz frames. Between them the loop dozes. */
+  const LINK_FRAME = 40;
+  let linkClock = 0; // the time the crests are drawn at: it advances only on a crest frame
+  let lastLinkPaint = -Infinity;
+  type LinkPath = {
+    xs: Float64Array; ys: Float64Array; at: Float64Array; length: number;
+    sigma: number; spread: number; push: number; motion: 0 | 1 | 2; speed: number; crest: number; box: Footprint;
+  };
+  let linkSpecs: readonly SurfaceFieldLink[] = [];
+  let links: LinkPath[] = [];
+  let linksDirty = false;
+  let linksMoving = false;
+  let linkBoxes: Footprint[] = [];
+  let prevCrestBoxes: Footprint[] = [];
+  const linkPad = (path: { spread: number; push: number }) => 3 * path.spread + path.push + dotPeak + step + 2;
+  const buildLinks = () => {
+    linksDirty = false;
+    const before = links;
+    const { x: ox, y: oy } = env.sceneOrigin(sceneSnapshot);
+    const rects = sceneSnapshot?.rects ?? [];
+    const centre = (id: string | undefined) => {
+      const r = id === undefined ? undefined : rects.find(rect => rect.id === id);
+      return r ? { x: (r.left + r.right) / 2 + ox, y: (r.top + r.bottom) / 2 + oy } : null;
+    };
+    const next: LinkPath[] = [];
+    for (const spec of linkSpecs) {
+      const xs: number[] = [], ys: number[] = [];
+      if (spec.points && spec.points.length >= 2) {
+        for (const p of spec.points) if (Number.isFinite(p.x) && Number.isFinite(p.y)) { xs.push(p.x + ox); ys.push(p.y + oy); }
+      } else {
+        const a = centre(spec.from), b = centre(spec.to);
+        if (!a || !b) continue;
+        /* The soft default: a cubic that leaves and arrives along the
+           longer axis, as a node editor's edge does. */
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const across = Math.abs(dx) >= Math.abs(dy);
+        const c1x = across ? a.x + dx / 2 : a.x, c1y = across ? a.y : a.y + dy / 2;
+        const c2x = across ? b.x - dx / 2 : b.x, c2y = across ? b.y : b.y - dy / 2;
+        for (let i = 0; i <= LINK_SAMPLES; i++) {
+          const t = i / LINK_SAMPLES, u = 1 - t;
+          xs.push(u * u * u * a.x + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * b.x);
+          ys.push(u * u * u * a.y + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * b.y);
+        }
+      }
+      /* A FEW CHORDS, NOT A SAMPLE EVERY FEW PIXELS. Every dot near a link
+         walks its chords, so a path a host sampled densely along straight
+         runs (an edge that steps, a polyline from an SVG) is thinned first:
+         a point is dropped while the run stays within half a pixel of a
+         straight line, which no dot can tell apart. */
+      if (xs.length > 2) {
+        const keep = new Uint8Array(xs.length);
+        keep[0] = keep[xs.length - 1] = 1;
+        const stack: [number, number][] = [[0, xs.length - 1]];
+        while (stack.length) {
+          const [i0, i1] = stack.pop()!;
+          const ax = xs[i0], ay = ys[i0], sx = xs[i1] - ax, sy = ys[i1] - ay;
+          const len = Math.hypot(sx, sy) || 1;
+          let far = 0, at = -1;
+          for (let i = i0 + 1; i < i1; i++) {
+            const d = Math.abs((xs[i] - ax) * sy - (ys[i] - ay) * sx) / len;
+            if (d > far) { far = d; at = i; }
+          }
+          if (far > 0.5 && at > 0) { keep[at] = 1; stack.push([i0, at], [at, i1]); }
+        }
+        let n = 0;
+        for (let i = 0; i < xs.length; i++) if (keep[i]) { xs[n] = xs[i]; ys[n] = ys[i]; n++; }
+        xs.length = n; ys.length = n;
+      }
+      if (xs.length < 2) continue;
+      const at = new Float64Array(xs.length);
+      let left = xs[0], right = xs[0], top = ys[0], bottom = ys[0];
+      for (let i = 1; i < xs.length; i++) {
+        at[i] = at[i - 1] + Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+        left = Math.min(left, xs[i]); right = Math.max(right, xs[i]);
+        top = Math.min(top, ys[i]); bottom = Math.max(bottom, ys[i]);
+      }
+      const length = at[xs.length - 1];
+      if (length < 1) continue;
+      const width = Number.isFinite(spec.width) && (spec.width as number) > 0 ? spec.width as number : LINK_WIDTH;
+      const sigma = width / 2;
+      const path: LinkPath = {
+        xs: Float64Array.from(xs), ys: Float64Array.from(ys), at, length,
+        sigma, spread: Math.max(sigma, step), push: Math.min(width / 3, step / 5),
+        motion: spec.motion === "loop" ? 1 : spec.motion === "bounce" ? 2 : 0,
+        speed: Number.isFinite(spec.speed) && (spec.speed as number) > 0 ? spec.speed as number : LINK_SPEED,
+        crest: -Infinity, box: { left, top, right, bottom },
+      };
+      const pad = linkPad(path);
+      path.box = { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
+      next.push(path);
+    }
+    links = next;
+    linksMoving = animating && links.some(path => path.motion !== 0);
+    /* What changed is repainted where it was and where it is. */
+    for (const path of [...before, ...next]) linkBoxes.push({ ...path.box });
+  };
+  /* Where each moving link's crest is at this frame: a loop runs past both
+     ends by two crest widths so it leaves and enters softly; a bounce turns
+     round at the same margins. */
+  const prepareLinks = () => {
+    if (!linksMoving) return;
+    const seconds = linkClock / 1000;
+    for (const path of links) {
+      if (!path.motion) continue;
+      const span = path.length + 4 * LINK_CREST;
+      const travel = (seconds * path.speed) % (path.motion === 2 ? 2 * span : span);
+      path.crest = (path.motion === 2 && travel > span ? 2 * span - travel : travel) - 2 * LINK_CREST;
+    }
+  };
+  /* The nearest point of a link's path to (x, y): its squared distance is
+     returned, and `linkAlong`, `linkOX`, `linkOY` say where along the path it
+     lies and the way out from it. */
+  let linkAlong = 0, linkOX = 0, linkOY = 0;
+  const nearLink = (x: number, y: number, path: LinkPath) => {
+    let best = Infinity;
+    for (let i = 0, n = path.xs.length - 1; i < n; i++) {
+      const ax = path.xs[i], ay = path.ys[i];
+      const bx = path.xs[i + 1], by = path.ys[i + 1];
+      /* A chord whose box is already farther than the best is skipped
+         before any division. */
+      const gx = x < Math.min(ax, bx) ? Math.min(ax, bx) - x : x > Math.max(ax, bx) ? x - Math.max(ax, bx) : 0;
+      const gy = y < Math.min(ay, by) ? Math.min(ay, by) - y : y > Math.max(ay, by) ? y - Math.max(ay, by) : 0;
+      if (gx * gx + gy * gy >= best) continue;
+      const sx = bx - ax, sy = by - ay;
+      const len2 = sx * sx + sy * sy;
+      let u = len2 > 0 ? ((x - ax) * sx + (y - ay) * sy) / len2 : 0;
+      u = u < 0 ? 0 : u > 1 ? 1 : u;
+      const dx = x - (ax + sx * u), dy = y - (ay + sy * u);
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) { best = d2; linkAlong = path.at[i] + u * (path.at[i + 1] - path.at[i]); linkOX = dx; linkOY = dy; }
+    }
+    return best;
+  };
+  /* How much of a moving link's crest is at `along`: 1 on it, 0 far away. */
+  const crestAt = (path: LinkPath, along: number) => {
+    const off = along - path.crest;
+    return Math.exp(-(off * off) / (2 * LINK_CREST * LINK_CREST));
+  };
+  /* The box a crest touches: the path's points within two and a half crest
+     widths of it (past that the glow is under a twentieth), padded by the
+     vein's own reach, the dot and one spacing for the fabric's neighbours.
+     Null when the crest is off the path. */
+  const crestBox = (path: LinkPath): Footprint | null => {
+    const reach = 2.5 * LINK_CREST;
+    const lo = path.crest - reach, hi = path.crest + reach;
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    /* Each chord CLIPPED to the stretch the crest touches: a thinned path
+       has long chords, and a whole chord's box would repaint far more than
+       the glow. */
+    for (let i = 0, n = path.xs.length - 1; i < n; i++) {
+      const a0 = path.at[i], a1 = path.at[i + 1];
+      if (a1 < lo || a0 > hi || a1 <= a0) continue;
+      const u0 = Math.max(0, (lo - a0) / (a1 - a0)), u1 = Math.min(1, (hi - a0) / (a1 - a0));
+      for (const u of [u0, u1]) {
+        const x = path.xs[i] + (path.xs[i + 1] - path.xs[i]) * u;
+        const y = path.ys[i] + (path.ys[i + 1] - path.ys[i]) * u;
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
+      }
+    }
+    if (left > right) return null;
+    const pad = 3 * path.sigma + path.push + dotPeak + step + 2;
+    return { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
+  };
+  /* Once a frame, after whatever else it drew: the crests' old and new boxes,
+     and any box a changed link owes. */
+  const paintLinks = () => {
+    const due = linksMoving && now - lastLinkPaint >= LINK_FRAME;
+    if (!due) {
+      if (linkBoxes.length) paintRegions(linkBoxes);
+      linkBoxes = [];
+      if (!linksMoving && prevCrestBoxes.length) { paintRegions(prevCrestBoxes); prevCrestBoxes = []; }
+      return;
+    }
+    lastLinkPaint = now;
+    linkClock = now;
+    prepareLinks();
+    const crests: Footprint[] = [];
+    for (const path of links) if (path.motion) { const box = crestBox(path); if (box) crests.push(box); }
+    paintRegions([...prevCrestBoxes, ...crests.map(box => ({ ...box })), ...linkBoxes]);
+    prevCrestBoxes = crests;
+    linkBoxes = [];
+  };
+  const onLinks = (value: readonly SurfaceFieldLink[] | null) => {
+    linkSpecs = value ?? [];
+    linksDirty = true;
+    if (animating) { wake(); return; }
+    /* No loop to pick it up (reduced motion, `still`): one full paint. */
+    buildLinks();
+    linkBoxes = [];
+    render();
+  };
   const indexScene = () => {
     bins.clear();
     broadFields.length = 0;
@@ -563,6 +793,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       nearbyFields.delete(field);
     }
     indexScene();
+    if (linkSpecs.length) linksDirty = true;
   };
   const retargetSelection = () => {
     /* Every visible layer owns the same complete field as a held layer.
@@ -1110,6 +1341,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
   }));
   let preparedCount = 0;
   const prepareRipples = () => {
+    prepareLinks();
     /* Many live node fields use the scene's local bins, so every dot does
        not scan every visible layer on a crowded board. */
     useFieldBins = activeFields.length > 8;
@@ -1303,6 +1535,42 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     }
     px += selectedPushX;
     py += selectedPushY;
+    let linkWave = 0;
+    for (let k = 0; k < links.length; k++) {
+      const path = links[k];
+      const box = path.box;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+      const best = nearLink(x, y, path);
+      const ox = linkOX, oy = linkOY;
+      const w2 = path.spread * path.spread;
+      if (best > 9 * w2) continue;
+      /* A LINK LIGHTS ITS OWN NARROW STRIP, the way a surface lights round
+         itself: within one and a half widths of the path the dots come up and
+         the fabric draws, so two linked surfaces read as joined by a lit seam
+         of the same mesh. A moving link keeps a little under half of that at
+         rest and the crest brings the rest as it passes. Worked out HERE, from
+         the one measure the push takes, and not in `focusAt` a second time. */
+      const pulse = path.motion && linksMoving ? crestAt(path, linkAlong) : 0;
+      const reach = 3 * path.sigma;
+      if (best < reach * reach) {
+        const lit = focusFalloff(best, reach, reach * reach) * (path.motion && linksMoving ? 0.45 + 0.55 * pulse : 0.8);
+        if (lit > t) t = lit;
+        if (lit > fabricFocus) fabricFocus = lit;
+      }
+      const s2 = path.sigma * path.sigma;
+      const bell = Math.exp(-best / (2 * s2));
+      /* THE CREST IS LIGHT ONLY. The parting stays as it is while the crest
+         passes, so a crest frame changes nothing beyond the vein's own three
+         widths, and that strip is all a crest frame repaints. */
+      const lift = path.motion && linksMoving ? LINK_LIFT / 3 + (1 - LINK_LIFT / 3) * pulse : LINK_LIFT;
+      linkWave = Math.max(linkWave, bell * lift);
+      const d = Math.sqrt(best);
+      if (d > 0.01) {
+        const m = path.push * Math.exp(0.5 - best / (2 * w2)) / path.spread;
+        px += ox * m;
+        py += oy * m;
+      }
+    }
     if (cursorScale > 0 && cursorWeight > 0 && focusShapeWeight < 1) {
       const dx = px - fx;
       const dy = py - fy;
@@ -1316,7 +1584,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         py += dy * scale;
       }
     }
-    const waveLift = Math.min(Math.max(wave, selectedWave), 1); // overlapping fields cannot add brightness
+    const waveLift = Math.min(Math.max(wave, selectedWave, linkWave), 1); // overlapping fields cannot add brightness
     let alpha = baseAlpha + (peakAlpha - baseAlpha) * t + waveLift * rippleBoost;
     /* A held area clears the dots inside it. Fade and shrink each dot by
        its final displaced centre, so none can leak across the edge. The
@@ -1337,7 +1605,15 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       dBaseFabricAlpha = 0;
       return;
     }
-    if (alpha > peakAlpha) alpha = peakAlpha; // never brighter than the established peak
+    /* ═══ EXCEPT ALONG A LINK, WHOSE VEIN RISES ABOVE THE PEAK ═══
+       Two linked surfaces sit in each other's light, where every dot is
+       already at the peak, so a link held to it would vanish exactly where it
+       matters. Its own dots may go up to 1.8× the peak at the centre of the
+       vein, and grow by up to a third, and nowhere else does anything change:
+       the field's brightest dot is still the one the host set, off the seam. */
+    if (linkWave > 0) alpha += linkWave * peakAlpha * LINK_OVER;
+    const cap = peakAlpha * (1 + LINK_OVER * linkWave);
+    if (alpha > cap) alpha = cap; // never brighter than the established peak, off a link
     /* A link belongs to the bright core, while a dot remains visible into
        the far field. Squaring the light's share removes the baseline link
        without dimming the centre or introducing a hard edge. */
@@ -1349,8 +1625,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     const dg = (fg[1] + (primary[1] - fg[1]) * warm) | 0;
     const db = (fg[2] + (primary[2] - fg[2]) * warm) | 0;
     dR = Math.min(
-      dotPeak,
-      dotBase + t * (dotPeak - dotBase) + waveLift * rippleGrow,
+      dotPeak * (1 + linkWave / 3),
+      dotBase + t * (dotPeak - dotBase) + waveLift * rippleGrow + linkWave * dotPeak / 3,
     );
     if (edgeTaper < 1) dR *= Math.sqrt(edgeTaper);
     dStyle = styleFor(dr, dg, db, alpha);
@@ -2241,6 +2517,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     now = time;
     advancePreview(time);
     advanceSelection(time);
+    if (linksDirty) buildLinks();
     /* Before the carry check: a host may pan under a carried object, and
        the grid has to follow even while the light is asleep. */
     const moved = applyViewport();
@@ -2329,7 +2606,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     /* A FIELD THAT BREATHES NEVER SLEEPS, so this is the `breathe = 0` case
        and the behaviour this file has always had: the light arrives and the
        loop goes down until a hand or a ring brings it back. */
-    const asleep = settled && !breathing;
+    const asleep = settled && !breathing && !linksMoving;
     if (moved) {
       /* `render` already drew this frame everywhere, light and breath. */
       lastBreath = time;
@@ -2357,6 +2634,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         lastBreath = time;
       }
     }
+    paintLinks();
     resting = settled;
     if (asleep) {
       raf = 0; // asleep, not stopped: `wake` picks it back up
@@ -2368,7 +2646,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
        per frame. Each of those keeps the loop on every vsync. */
     if (
       settled &&
-      breathing &&
+      (breathing || linksMoving) &&
       !ripples.length &&
       !pending.current.length &&
       !(wander && focused && !pointerInside) &&
@@ -2394,7 +2672,11 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
      , the check that was always there. */
   const snooze = (time: number) => {
     raf = 0;
-    const wait = lastBreath + BREATH_FRAME - time - 10;
+    /* The sooner of the two clocks that still tick: the breath's and a
+       moving link's crest. */
+    let due = breathIdx.length ? lastBreath + BREATH_FRAME : Infinity;
+    if (linksMoving) due = Math.min(due, lastLinkPaint + LINK_FRAME);
+    const wait = due - time - 10;
     if (wait <= 0) {
       raf = nextFrame();
       return;
@@ -2750,6 +3032,12 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     sceneSnapshot = scene;
     sceneDirty = true;
     wake();
+    /* A link routed by ids follows its ends even where no loop runs. */
+    if (!animating && linkSpecs.some(spec => !spec.points)) {
+      buildLinks();
+      linkBoxes = [];
+      render();
+    }
   };
   const onVisibility = (hidden: boolean) => {
     if (hidden) {
@@ -2855,7 +3143,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         if (!viewFromController && !kept) reseed = true;
         viewFromController = true;
         onViewport(signal.value);
-      } else recolour();
+      } else if (signal.kind === "links") onLinks(signal.value);
+      else recolour();
     },
     viewportProp(next) { if (!viewFromController) onViewport(next); },
     ripple(x, y) {

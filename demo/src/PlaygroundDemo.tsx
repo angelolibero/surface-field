@@ -63,6 +63,12 @@ export function PlaygroundDemo({ settings, dark, setDark }: { settings: FieldSet
   };
 
   React.useEffect(() => { controller.refreshTheme(); }, [accent, controller, dark]);
+  /* Two links, routed by id so they follow their surfaces: a crest running
+     from the note to the round one, and a still channel from the label. */
+  React.useEffect(() => {
+    controller.setLinks([{ from: "note", to: "swatch", motion: "loop" }, { from: "label", to: "note" }]);
+    return () => controller.setLinks(null);
+  }, [controller]);
 
   /* A turn kept in (-180, 180], so a card spun twice reads -6 and not 714. */
   const wrap = (deg: number) => { const d = ((deg % 360) + 360) % 360; return d > 180 ? d - 360 : d; };

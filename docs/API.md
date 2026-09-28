@@ -52,6 +52,21 @@ Create a controller once for each field instance and pass it as `controller`. It
 | `setPreview({ rect, committed? })` | The rectangle is viewport CSS pixels. `null` ends the preview; `committed` lets its light fade after commitment. |
 | `refreshTheme()` | Rereads inherited color and accent, then repaints even if the motion loop is asleep. |
 | `setViewport({ x, y, zoom })` | Same meaning as the `viewport` prop. Retained like the scene and replayed on attachment. After the first call the controller owns the camera and the prop is ignored for that field. Calls within one frame coalesce into one repaint. |
+| `setLinks(links \| null)` | Connections drawn as channels in the field. Same coordinates as the scene. Retained like the scene and replayed on attachment; `null` clears them. See Links below. |
+
+### Links
+
+A link joins two surfaces through the field itself: along its path the dots lift into a narrow lit vein and the fabric parts a little on either side. Nothing is stroked over the field.
+
+| Field | Meaning |
+| --- | --- |
+| `from`, `to` | Scene ids of the two ends. Without `points` the path is a soft curve between their centres, and it follows them as the scene changes. |
+| `points` | The path itself, a polyline in the scene root's CSS pixels, when the host already has one (for example a React Flow edge, sampled from its SVG path). Wins over `from`/`to`. Dense samples along straight runs are thinned automatically. |
+| `width` | Width of the lit vein in CSS pixels. Default `16`. The parting on either side spreads over at least one grid spacing so the lattice bends instead of breaking. |
+| `motion` | `"still"` (default), `"loop"` for a crest running from `from` to `to`, or `"bounce"` for one going back and forth. |
+| `speed` | Crest speed in CSS pixels per second. Default `160`. |
+
+Still links cost nothing once drawn and never wake the loop. A moving link keeps the loop at 25 crest frames a second and repaints only the strip round its crest; with the `worker` prop that work is off the main thread. Reduced motion and `still` draw links without motion. Hosts that do not call `setLinks` see no change.
 
 ### Shapes
 

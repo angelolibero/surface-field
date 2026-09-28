@@ -242,6 +242,12 @@ export function createWorkerSink(deps: WorkerSinkDeps, start: WorkerSinkStart): 
           return;
         }
       }
+      /* Links are state, like the camera: two in one frame are the second. */
+      if (signal.kind === "links" && prev?.k === "signal" && prev.signal.kind === "links") {
+        prev.signal = { kind: "links", value: signal.value };
+        schedule();
+        return;
+      }
       if (signal.kind === "viewport" && prev?.k === "signal" && prev.signal.kind === "viewport") {
         prev.signal = { kind: "viewport", value: signal.value };
         schedule();
