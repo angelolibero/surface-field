@@ -25,6 +25,9 @@ const out = (n: Node) => [n.left + n.width, n.top + n.height / 2] as const;
 const into = (n: Node) => [n.left, n.top + n.height / 2] as const;
 /* The one node in the hand: selected, its resize frame showing, as in the demo. */
 const HELD = "notes";
+/* The edge that carries a wave in the picture, and how fast it runs. */
+const WAVE = ["source", "layout"] as const;
+const WAVE_SPEED = 74;
 
 /* React Flow's smoothstep: across to the middle, down, across again, every
    turn rounded. 14 is its default border radius at this stroke. */
@@ -69,11 +72,21 @@ function Cover() {
       root,
       rects: nodes.map(n => ({ id: n.id, parent: null, left: n.left, top: n.top, right: n.left + n.width, bottom: n.top + n.height, radius })),
     });
+    /* Every edge is also a channel in the field, along the same steps the
+       edge draws: across, down, across. One carries its wave, at a speed
+       picked so that the three seconds before the picture leave the crest
+       halfway down its drop. */
+    controller.setLinks(edges.map(e => {
+      const [x1, y1] = out(byId[e.from]), [x2, y2] = into(byId[e.to]);
+      const mx = (x1 + x2) / 2;
+      const points = [{ x: x1, y: y1 }, { x: mx, y: y1 }, { x: mx, y: y2 }, { x: x2, y: y2 }];
+      return e.from === WAVE[0] && e.to === WAVE[1] ? { points, motion: "loop" as const, speed: WAVE_SPEED, strength: 2 } : { points };
+    }));
     /* The light rests where the graph is, as if a hand had just left it. */
     const aim = () => window.dispatchEvent(new PointerEvent("pointermove", { clientX: 1150, clientY: 440, pointerType: "mouse" }));
     aim();
     const again = window.setTimeout(aim, 120);
-    return () => { window.clearTimeout(again); controller.setScene(null); };
+    return () => { window.clearTimeout(again); controller.setLinks(null); controller.setScene(null); };
   }, [controller]);
 
   return <div className="cover" ref={stage}>
