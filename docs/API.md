@@ -56,17 +56,18 @@ Create a controller once for each field instance and pass it as `controller`. It
 
 ### Links
 
-A link joins two surfaces through the field itself: along its path the dots lift into a narrow lit vein and the fabric parts a little on either side. Nothing is stroked over the field.
+A link joins two surfaces with a channel of the field's own dots: only the dots that lie on the path answer it. At rest the channel is a thin, slightly brighter line of dots, with the connected lines along it. A moving link sends the same wave a click sends, run along the path instead of out from a point: a crest of the ripple's own profile, half its `rippleWidth`, that pushes the dots ahead by `ripplePush`, lifts them with `rippleBoost` and `rippleGrow`, and bows back from the path like a piece of a ring. With `ripplePush={0}` the crest lights the channel but moves nothing.
 
 | Field | Meaning |
 | --- | --- |
 | `from`, `to` | Scene ids of the two ends. Without `points` the path is a soft curve between their centres, and it follows them as the scene changes. |
 | `points` | The path itself, a polyline in the scene root's CSS pixels, when the host already has one (for example a React Flow edge, sampled from its SVG path). Wins over `from`/`to`. Dense samples along straight runs are thinned automatically. |
-| `width` | Width of the lit vein in CSS pixels. Default `16`. The parting on either side spreads over at least one grid spacing so the lattice bends instead of breaking. |
-| `motion` | `"still"` (default), `"loop"` for a crest running from `from` to `to`, or `"bounce"` for one going back and forth. |
-| `speed` | Crest speed in CSS pixels per second. Default `160`. |
+| `width` | Width of the wave's corridor in CSS pixels. Default `56`, about three dots across at the default spacing; the resting line is half as wide. |
+| `strength` | How strong the wave is. `1` moves a dot as far as a click's ring does (`ripplePush`); up to `4`. `0` hides the link. |
+| `motion` | `"still"` (default), `"loop"` for a lift running from `from` to `to`, or `"bounce"` for one going back and forth. |
+| `speed` | Wave speed in CSS pixels per second. Default `220`. |
 
-Still links cost nothing once drawn and never wake the loop. A moving link keeps the loop at 25 crest frames a second and repaints only the strip round its crest; with the `worker` prop that work is off the main thread. Reduced motion and `still` draw links without motion. Hosts that do not call `setLinks` see no change.
+Still links cost nothing once drawn and never wake the loop. A moving link keeps the loop at 30 wave frames a second, dozing in between, and repaints only the channel's stretch under the crest; with the `worker` prop that work is off the main thread. Reduced motion and `still` draw links without motion. Hosts that do not call `setLinks` see no change.
 
 ### Shapes
 

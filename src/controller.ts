@@ -20,9 +20,10 @@ export type SurfaceFieldRect = {
 };
 
 /**
- * A connection between two surfaces, drawn as a channel IN the field: the
- * dots along its path lift and part a little, and, if it moves, a crest runs
- * along it. Coordinates are the scene's (CSS pixels relative to the scene
+ * A connection between two surfaces, drawn as a channel of the field's own
+ * dots along a path: only the dots on the path answer it. At rest it is a
+ * thin, slightly brighter line; if it moves, the wave a click sends runs
+ * along it, pushing, lifting and tinting the dots it crosses. Coordinates are the scene's (CSS pixels relative to the scene
  * root), so a host that follows a camera sends its links with its scene.
  */
 export type SurfaceFieldLink = {
@@ -31,12 +32,14 @@ export type SurfaceFieldLink = {
   to?: string;
   /** The path itself, as a polyline in the scene root's CSS pixels, when the host already has one (a React Flow edge). Wins over `from`/`to`. */
   points?: readonly { x: number; y: number }[];
-  /** Width of the channel in CSS pixels. Default 16. */
+  /** Width of the wave's corridor in CSS pixels. Default 56, about three dots across at the default spacing; the resting line is half as wide. */
   width?: number;
-  /** `"loop"` sends a crest from `from` to `to` again and again, `"bounce"` back and forth. Default `"still"`. Never moves under reduced motion or `still`. */
+  /** `"loop"` sends a wave from `from` to `to` again and again, `"bounce"` back and forth. Default `"still"`. Never moves under reduced motion or `still`. */
   motion?: "still" | "loop" | "bounce";
-  /** Speed of the crest in CSS pixels per second. Default 160. */
+  /** Speed of the wave in CSS pixels per second. Default 220. */
   speed?: number;
+  /** How strong the wave is: 1 moves a dot as far as a click's ring does (`ripplePush`). Default 1, up to 4; 0 hides the link. */
+  strength?: number;
 };
 
 export type SurfaceFieldScene = {

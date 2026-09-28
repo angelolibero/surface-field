@@ -88,8 +88,8 @@ const sameRects = (a: readonly SceneRect[], b: readonly SceneRect[]) =>
   a.length === b.length && a.every((r, i) => r.id === b[i].id && r.left === b[i].left &&
     r.top === b[i].top && r.right === b[i].right && r.bottom === b[i].bottom && r.radius === b[i].radius);
 
-function FieldBridge({ controller, root }: {
-  controller: SurfaceFieldController; root: React.RefObject<HTMLDivElement | null>;
+function FieldBridge({ controller, root, links: showLinks, strength, speed }: {
+  controller: SurfaceFieldController; root: React.RefObject<HTMLDivElement | null>; links: boolean; strength: number; speed: number;
 }) {
   const store = useStoreApi();
   React.useEffect(() => {
@@ -169,6 +169,7 @@ function FieldBridge({ controller, root }: {
     let linkFrame = 0;
     const sendLinks = () => {
       linkFrame = 0;
+      if (!showLinks) { controller.setLinks(null); return; }
       const box = element.getBoundingClientRect();
       const links: SurfaceFieldLink[] = [];
       for (const edge of element.querySelectorAll<SVGGElement>(".react-flow__edge")) {
@@ -182,7 +183,7 @@ function FieldBridge({ controller, root }: {
           const p = path.getPointAtLength(length * i / count).matrixTransform(matrix);
           return { x: p.x - box.left, y: p.y - box.top };
         });
-        links.push({ points, width: 16, motion: edge.classList.contains("animated") ? "loop" : "still" });
+        links.push({ points, motion: edge.classList.contains("animated") ? "loop" : "still", speed, strength });
       }
       controller.setLinks(links);
     };
@@ -197,7 +198,7 @@ function FieldBridge({ controller, root }: {
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
     };
-  }, [controller, root, store]);
+  }, [controller, root, store, showLinks, strength, speed]);
   React.useEffect(() => () => controller.setScene(null), [controller]);
   return null;
 }
@@ -212,7 +213,7 @@ const fitOptions = (): FitViewOptions => ({
     : { top: "84px", right: "28px", bottom: "96px", left: "28px" },
 });
 
-function FlowCanvas({ config, accent, dark }: { config: Config; accent: string | null; dark: boolean }) {
+function FlowCanvas({ config, accent, dark, links, linkStrength, linkSpeed }: { config: Config; accent: string | null; dark: boolean; links: boolean; linkStrength: number; linkSpeed: number }) {
   const fitViewOptions = React.useMemo(fitOptions, []);
   const root = React.useRef<HTMLDivElement>(null);
   const controller = React.useMemo(createSurfaceFieldController, []);
@@ -245,7 +246,7 @@ function FlowCanvas({ config, accent, dark }: { config: Config; accent: string |
       <Controls position="bottom-center" orientation="horizontal" showInteractive={false} fitViewOptions={fitViewOptions} />
       <MiniMap position="top-right" pannable zoomable nodeBorderRadius={10} style={{ width: 172, height: 112 }} />
     </ReactFlow>
-    <FieldBridge controller={controller} root={root} />
+    <FieldBridge controller={controller} root={root} links={links} strength={linkStrength} speed={linkSpeed} />
   </div>;
 }
 
@@ -255,6 +256,6 @@ export function FlowDemo({ settings, dark, setDark }: { settings: FieldSettings;
     settings={settings} dark={dark} setDark={setDark} sheetTitle="React Flow demo controls"
     intro="Surface Field as React Flow's background. Pan, zoom, move or resize a card: the grid follows the canvas and every card carves its clearing."
   >
-    <ReactFlowProvider><FlowCanvas config={settings.config} accent={settings.accent} dark={dark} /></ReactFlowProvider>
+    <ReactFlowProvider><FlowCanvas config={settings.config} accent={settings.accent} dark={dark} links={settings.links} linkStrength={settings.linkStrength} linkSpeed={settings.linkSpeed} /></ReactFlowProvider>
   </FieldWorkspace>;
 }

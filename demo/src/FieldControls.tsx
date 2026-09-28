@@ -76,6 +76,10 @@ export type FieldSettings = {
   reset: () => void; copyCode: () => void;
   /** The docked sidebar, held here so it stays open or shut across tabs. */
   sidebar: boolean; setSidebar: (open: boolean) => void;
+  /** The demo's links, shared by both tabs: one trigger, and how strong and how fast their wave is. They are the scene's, not the field's props, so Copy config leaves them out. */
+  links: boolean; setLinks: (on: boolean) => void;
+  linkStrength: number; setLinkStrength: (value: number) => void;
+  linkSpeed: number; setLinkSpeed: (value: number) => void;
 };
 
 export function useFieldSettings(): FieldSettings {
@@ -84,6 +88,11 @@ export function useFieldSettings(): FieldSettings {
   const [accent, setAccent] = React.useState<Accent>(null);
   const [copied, setCopied] = React.useState(false);
   const [sidebar, setSidebar] = React.useState(true);
+  const [links, setLinks] = React.useState(true);
+  /* The demo starts a little above the package's default, a click's ring and a
+     half, so the wave is seen at once on a quiet field. */
+  const [linkStrength, setLinkStrength] = React.useState(1.5);
+  const [linkSpeed, setLinkSpeed] = React.useState(220); // the package's default
 
   const change = React.useCallback(<K extends keyof Config>(key: K, value: Config[K]) => {
     setConfig(current => ({ ...current, [key]: value }));
@@ -97,6 +106,9 @@ export function useFieldSettings(): FieldSettings {
   const reset = React.useCallback(() => {
     setPreset("workspace");
     setAccent(null);
+    setLinks(true);
+    setLinkStrength(1.5);
+    setLinkSpeed(220);
   }, [setPreset]);
 
   /* A LAYOUT effect, so the tint is on the root before any tab's passive
@@ -111,7 +123,7 @@ export function useFieldSettings(): FieldSettings {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar };
+  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar, links, setLinks, linkStrength, setLinkStrength, linkSpeed, setLinkSpeed };
 }
 
 /* ── The sidebar. ── */
@@ -195,13 +207,23 @@ function ControlPanel({ settings, intro, dark, setDark, onReset, onClose }: Pane
     </div>
     <Separator />
     <div className="control-group">
-      <div className="group-title"><span>Color & motion</span></div>
+      <div className="group-title"><span>Color</span></div>
       <div className="color-control"><Label htmlFor={accentInputId}>Accent color</Label><span className="color-picker" style={{ "--selected-color": accent ?? inkVar } as React.CSSProperties}>
         <input id={accentInputId} type="color" value={accent ?? (dark ? "#ffffff" : "#000000")} title={accent ? `Choose accent color (${accent})` : "Choose accent color (neutral)"} onInput={event => pickAccent(event.currentTarget.value)} onChange={event => pickAccent(event.currentTarget.value)} />
       </span></div>
-      <SliderRow id="tint" label="Accent blend" value={Math.round(config.tint * 100)} min={0} max={80} unit="%" onChange={value => change("tint", value / 100)} />
+      {/* A neutral accent is the dots' own ink: there is nothing to blend toward, so the blend waits for a colour. */}
+      {accent !== null && <SliderRow id="tint" label="Accent blend" value={Math.round(config.tint * 100)} min={0} max={80} unit="%" onChange={value => change("tint", value / 100)} />}
+    </div>
+    <Separator />
+    <div className="control-group">
+      <div className="group-title"><span>Motion</span></div>
       <SwitchRow id="wander" label="Wandering light" description="Let the light drift when idle" checked={config.wander} onChange={value => change("wander", value)} />
-      <SliderRow id="breathe" label="Breathing dots" value={Math.round(config.breathe * 100)} min={0} max={100} unit="%" onChange={value => change("breathe", value / 100)} />
+      {/* On is Ambient's depth; the slider then only tunes it and never reaches 0, which is what off is for. */}
+      <SwitchRow id="breathe" label="Breathing dots" description="Let the dots fade in and out" checked={config.breathe > 0} onChange={on => change("breathe", on ? 0.4 : 0)} />
+      {config.breathe > 0 && <SliderRow id="breathe-depth" label="Breath depth" value={Math.round(config.breathe * 100)} min={5} max={100} step={5} unit="%" onChange={value => change("breathe", value / 100)} />}
+      <SwitchRow id="links" label="Link wave" description="A wave between linked surfaces" checked={settings.links} onChange={settings.setLinks} />
+      {settings.links && <SliderRow id="link-strength" label="Wave strength" value={Math.round(settings.linkStrength * 100)} min={25} max={400} step={25} unit="%" onChange={value => settings.setLinkStrength(value / 100)} />}
+      {settings.links && <SliderRow id="link-speed" label="Wave speed" value={settings.linkSpeed} min={60} max={800} step={20} unit=" px/s" onChange={settings.setLinkSpeed} />}
       <SwitchRow id="still" label="Still field" description="Render a static texture" checked={config.still} onChange={value => change("still", value)} />
     </div>
   </div>;

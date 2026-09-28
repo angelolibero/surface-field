@@ -508,49 +508,65 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     (a.geo === b.geo || (!!a.geo && !!b.geo && a.geo.r === b.geo.r && a.geo.cos === b.geo.cos &&
       a.geo.sin === b.geo.sin && a.geo.ellipse === b.geo.ellipse && a.geo.hx === b.geo.hx && a.geo.hy === b.geo.hy));
 
-  /* ═══ A LINK IS A CHANNEL IN THE FIELD, NOT A LINE DRAWN OVER IT ═══════════
+  /* ═══ A LINK IS A CHANNEL, AND ITS MOTION IS THE CLICK'S WAVE ════════════
      .
-     Two surfaces that belong together are joined by the fabric itself: along
-     the path the dots part a little and lift, the way they do round a
-     surface, on a band a few dots wide. Nothing is stroked. A line would be a
-     second drawing on top of the field; this is the field saying it.
+     Two surfaces that belong together are joined by the dots that lie on the
+     path between them, a channel cut out of the field that is already there.
+     Nothing is drawn. At rest the channel is a thin line of dots a little
+     more lit than their neighbours, with the fabric's lines along it.
      .
-     TWO WIDTHS, BECAUSE THE LATTICE HAS ONE. The LIGHT is as narrow as the
-     host asks: the dots within the width lift, a vein a dot or two across.
-     The PARTING cannot be: a push narrower than the spacing moves one row of
-     dots and not its neighbours, and the rows crossing the path zigzag. So
-     the push spreads over at least one spacing, and is a derivative, not a
-     bump: (d/σ)·e^(½ − d²/2σ²) is zero ON the line, peaks at σ and dies by
-     three, so the dots on the path stay put, their neighbours step aside, and
-     a row crossing it bends instead of breaking. It is a third of the width
-     and never more than a fifth of the spacing, so a channel shades the
-     lattice without tearing it.
+     A moving link sends the SAME WAVE A CLICK SENDS, run along the path
+     instead of out from a point: a crest of the ripple's own profile, scaled
+     down to the channel, whose dots are pushed ahead by `ripplePush`, lifted
+     by `rippleBoost` and `rippleGrow` and tinted, exactly as a ring lifts the
+     dots it crosses. Its front is not flat: it bows back from the path as a
+     ring's arc does, so it reads as a piece of a ring travelling down a
+     corridor, and a dot beside the path is pushed out along that arc.
      .
-     A MOVING LINK CARRIES A CREST, the release ripple's gaussian travelling
-     along the path instead of out from a rectangle. At rest the channel keeps
-     a third of its lift, so a moving link reads as a pulse along a vein and
-     a still one as the vein alone.
+     A gaussian across the path, σ half the width, decides how much of a dot
+     belongs to the channel, so a diagonal path picks up the dots nearest to
+     it and lets go of the others softly instead of a hard row.
      .
      WHAT IT COSTS. A dot measures a link only inside the link's padded box,
      so a field without links, or a dot far from every one, pays one length
-     test. A still link is drawn with everything else and never asks for a
-     frame. A moving one keeps the loop awake, but each frame repaints only
-     the crest's own box, before and after, never the canvas. */
-  const LINK_WIDTH = 16;
-  const LINK_SPEED = 160; // px/s: a 400px edge in two and a half seconds
-  const LINK_CREST = 44; // px, the crest's gaussian width along the path
+     test, and a still channel's light is kept per dot (see `stillLift`). A
+     moving link keeps the loop at 30 wave frames a second, dozing in between,
+     and each repaints only the channel's stretch under the crest. */
+  const LINK_WIDTH = 56; // px: the wave's corridor, about three dots across at the default spacing
+  const LINK_SPEED = 220; // px/s: a 400px edge in under two seconds, a third of a click's ring
+  const LINK_REST = 0.3; // a still channel's light, as a share of the full light
+  const LINK_BOW = 48; // px: the radius of the ring whose arc the crest's front follows
+  /* The crest along the path: the ripple's own width, halved to the corridor
+     it runs in (a 38px ring becomes a 19px crest). */
+  const linkCrest = Math.max(6, Math.abs(rippleWidth) / 2);
   const LINK_SAMPLES = 32; // a default curve, walked in this many chords
-  const LINK_LIFT = 0.55; // a still channel's share of the ripple's lift
-  const LINK_OVER = 0.8; // how far above the peak a vein's centre may rise
-  /* A crest is a soft glow moving 160px a second: 25 steps a second move it
-     six pixels, against a glow 88px long, which reads as motion and not as
-     steps, for a fifth of the 120Hz frames. Between them the loop dozes. */
-  const LINK_FRAME = 40;
-  let linkClock = 0; // the time the crests are drawn at: it advances only on a crest frame
+  /* A crest moving 220px a second: 30 steps a second move it seven pixels
+     against a crest 19px wide each side, which still reads as a wave and
+     not as steps, for a quarter of the 120Hz frames. Between them the loop
+     dozes. */
+  const LINK_FRAME = 33;
+  let linkClock = 0; // the time the lifts are drawn at: it advances only on a lift frame
   let lastLinkPaint = -Infinity;
   type LinkPath = {
     xs: Float64Array; ys: Float64Array; at: Float64Array; length: number;
-    sigma: number; spread: number; push: number; motion: 0 | 1 | 2; speed: number; crest: number; box: Footprint;
+    sigma: number; strength: number; motion: 0 | 1 | 2; speed: number; phase: number; crest: number; dir: 1 | -1; box: Footprint;
+  };
+  /* The farthest any link can move a dot: the repaint boxes are grown by it
+     so a pushed dot and the lines it drags are never cut. 0 without links. */
+  let linkReach = 0;
+  /* ═══ A STILL CHANNEL'S LIGHT IS WORKED OUT ONCE PER DOT ═══
+     A still channel lights the same dots by the same amount until it or the grid
+     changes, and every repaint of a region near it (the pointer's light
+     crossing it, a breath, a lift) would otherwise walk every chord of every
+     link nearby again. So the still links' lift is kept per cell, filled the
+     first time a cell is drawn, and forgotten when the links are rebuilt or
+     the grid is laid out again. Moving links are measured live. */
+  let stillLift = new Float32Array(0), stillKnown = new Uint8Array(0);
+  const forgetStill = () => {
+    const n = cols * rows;
+    if (stillKnown.length !== n) {
+      stillLift = new Float32Array(n); stillKnown = new Uint8Array(n);
+    } else stillKnown.fill(0);
   };
   let linkSpecs: readonly SurfaceFieldLink[] = [];
   let links: LinkPath[] = [];
@@ -558,7 +574,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
   let linksMoving = false;
   let linkBoxes: Footprint[] = [];
   let prevCrestBoxes: Footprint[] = [];
-  const linkPad = (path: { spread: number; push: number }) => 3 * path.spread + path.push + dotPeak + step + 2;
+  const linkPad = (path: { sigma: number; strength: number }) => 3 * path.sigma + path.strength * Math.abs(ripplePush) + dotPeak * (1 + rippleGrow) + 2;
   const buildLinks = () => {
     linksDirty = false;
     const before = links;
@@ -623,40 +639,66 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       const length = at[xs.length - 1];
       if (length < 1) continue;
       const width = Number.isFinite(spec.width) && (spec.width as number) > 0 ? spec.width as number : LINK_WIDTH;
-      const sigma = width / 2;
+      /* STRENGTH SCALES THE CREASE, never the field under it: the push in
+         `ripplePush`s, and the light until it saturates. Four is as far as
+         it goes: past that a dot is pushed past its neighbour at the
+         default spacing, and the fabric folds over itself. */
+      const strength = Number.isFinite(spec.strength) ? Math.min(4, Math.max(0, spec.strength as number)) : 1;
+      if (strength === 0) continue;
       const path: LinkPath = {
         xs: Float64Array.from(xs), ys: Float64Array.from(ys), at, length,
-        sigma, spread: Math.max(sigma, step), push: Math.min(width / 3, step / 5),
+        sigma: width / 2, strength,
         motion: spec.motion === "loop" ? 1 : spec.motion === "bounce" ? 2 : 0,
         speed: Number.isFinite(spec.speed) && (spec.speed as number) > 0 ? spec.speed as number : LINK_SPEED,
-        crest: -Infinity, box: { left, top, right, bottom },
+        phase: 0, crest: -Infinity, dir: 1, box: { left, top, right, bottom },
       };
       const pad = linkPad(path);
       path.box = { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
       next.push(path);
     }
+    /* A NEW SPEED CARRIES ON FROM WHERE THE WAVE IS. The distance travelled
+       is the clock times the speed plus a phase, so a host that sends the
+       same links with another speed (a slider being dragged) would make every
+       wave jump; the phase is set so the distance stays where it was. Links
+       are matched by their place in the list, as a host resends them. */
+    for (let k = 0; k < next.length && k < before.length; k++) {
+      const old = before[k], path = next[k];
+      path.phase = old.phase + (linkClock / 1000) * (old.speed - path.speed);
+    }
     links = next;
+    /* Twice the strongest: two links leaving one surface overlap beside it,
+       and their pushes sum there. */
+    linkReach = 0;
+    for (const path of links) linkReach = Math.max(linkReach, 2 * path.strength * Math.abs(ripplePush));
+    forgetStill();
     linksMoving = animating && links.some(path => path.motion !== 0);
     /* What changed is repainted where it was and where it is. */
     for (const path of [...before, ...next]) linkBoxes.push({ ...path.box });
   };
+  /* How far past each end a crest runs, so it enters and leaves under the
+     surfaces instead of appearing on the path: three crest widths and the
+     bow's lag at the corridor's edge. */
+  const linkMargin = (path: LinkPath) => 3 * linkCrest + (9 * path.sigma * path.sigma) / (2 * LINK_BOW);
   /* Where each moving link's crest is at this frame: a loop runs past both
-     ends by two crest widths so it leaves and enters softly; a bounce turns
-     round at the same margins. */
+     ends by the margin; a bounce turns round there and runs back. */
   const prepareLinks = () => {
     if (!linksMoving) return;
     const seconds = linkClock / 1000;
     for (const path of links) {
       if (!path.motion) continue;
-      const span = path.length + 4 * LINK_CREST;
-      const travel = (seconds * path.speed) % (path.motion === 2 ? 2 * span : span);
-      path.crest = (path.motion === 2 && travel > span ? 2 * span - travel : travel) - 2 * LINK_CREST;
+      const margin = linkMargin(path);
+      const span = path.length + 2 * margin;
+      const cycle = path.motion === 2 ? 2 * span : span;
+      const travel = (((seconds * path.speed + path.phase) % cycle) + cycle) % cycle;
+      path.dir = path.motion === 2 && travel > span ? -1 : 1;
+      path.crest = (path.dir < 0 ? 2 * span - travel : travel) - margin;
     }
   };
   /* The nearest point of a link's path to (x, y): its squared distance is
-     returned, and `linkAlong`, `linkOX`, `linkOY` say where along the path it
-     lies and the way out from it. */
-  let linkAlong = 0, linkOX = 0, linkOY = 0;
+     returned, `linkAlong` says where along the path it lies, (`linkNX`,
+     `linkNY`) is the point and (`linkTX`, `linkTY`) the unit direction the
+     path runs there. */
+  let linkAlong = 0, linkNX = 0, linkNY = 0, linkTX = 1, linkTY = 0;
   const nearLink = (x: number, y: number, path: LinkPath) => {
     let best = Infinity;
     for (let i = 0, n = path.xs.length - 1; i < n; i++) {
@@ -673,21 +715,64 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       u = u < 0 ? 0 : u > 1 ? 1 : u;
       const dx = x - (ax + sx * u), dy = y - (ay + sy * u);
       const d2 = dx * dx + dy * dy;
-      if (d2 < best) { best = d2; linkAlong = path.at[i] + u * (path.at[i + 1] - path.at[i]); linkOX = dx; linkOY = dy; }
+      if (d2 < best) {
+        best = d2;
+        linkAlong = path.at[i] + u * (path.at[i + 1] - path.at[i]);
+        linkNX = ax + sx * u; linkNY = ay + sy * u;
+        const len = Math.sqrt(len2) || 1;
+        linkTX = sx / len; linkTY = sy / len;
+      }
     }
     return best;
   };
-  /* How much of a moving link's crest is at `along`: 1 on it, 0 far away. */
-  const crestAt = (path: LinkPath, along: number) => {
-    const off = along - path.crest;
-    return Math.exp(-(off * off) / (2 * LINK_CREST * LINK_CREST));
+  /* What the still links (moving = false) or the moving ones do to the dot
+     at (x, y): `linkRest`, the channel's own light; `linkWave`, how much of
+     a crest is on it, which lifts it as a ring's crest does; each the
+     strongest of them, since two channels crossing do not make a dot twice
+     as lit; and (`linkPushX`, `linkPushY`), where the crests move it, the
+     sum, as the ripples' pushes sum. */
+  let linkRest = 0, linkWave = 0, linkPushX = 0, linkPushY = 0;
+  const linkAt = (x: number, y: number, moving: boolean) => {
+    linkRest = 0; linkWave = 0; linkPushX = 0; linkPushY = 0;
+    for (let k = 0; k < links.length; k++) {
+      const path = links[k];
+      if ((path.motion !== 0 && linksMoving) !== moving) continue;
+      const box = path.box;
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
+      const s2 = path.sigma * path.sigma;
+      const best = nearLink(x, y, path);
+      if (best >= 9 * s2) continue;
+      const across = Math.exp(-best / (2 * s2));
+      /* The resting line is half the corridor wide (across⁴ is the gaussian
+         of σ/2), so the wave has room around a channel that stays thin. */
+      const thin = across * across;
+      linkRest = Math.max(linkRest, thin * thin * LINK_REST * Math.min(1, path.strength));
+      if (!moving) continue;
+      /* The ripple's crest, measured along the path: behind the front by
+         the bow, so the front is a ring's arc and not a flat bar. */
+      const off = (linkAlong - path.crest) * path.dir + best / (2 * LINK_BOW);
+      if (off * off > 16 * linkCrest * linkCrest) continue;
+      const infl = Math.exp(-(off * off) / (2 * linkCrest * linkCrest)) * across * path.strength;
+      if (infl < 0.002) continue;
+      linkWave = Math.max(linkWave, infl);
+      if (!ripplePush) continue;
+      /* Out along the arc's normal, the way a ring pushes: ahead down the
+         path, and aside by the bow's slope beside it. */
+      let nx = linkTX * path.dir + (x - linkNX) / LINK_BOW;
+      let ny = linkTY * path.dir + (y - linkNY) / LINK_BOW;
+      const norm = Math.sqrt(nx * nx + ny * ny) || 1;
+      const push = infl * ripplePush / norm;
+      nx *= push; ny *= push;
+      linkPushX += nx; linkPushY += ny;
+    }
+    if (linkWave > 1) linkWave = 1;
   };
-  /* The box a crest touches: the path's points within two and a half crest
-     widths of it (past that the glow is under a twentieth), padded by the
-     vein's own reach, the dot and one spacing for the fabric's neighbours.
-     Null when the crest is off the path. */
+  /* The box a lens touches: the path's points within two lens widths of it
+     (past that its gain is under a seventh and changes by less than a pixel
+     a frame), padded by the bulge's reach, the dot and one spacing for the
+     fabric's neighbours. Null when the lens is off the path. */
   const crestBox = (path: LinkPath): Footprint | null => {
-    const reach = 2.5 * LINK_CREST;
+    const reach = linkMargin(path) + linkCrest;
     const lo = path.crest - reach, hi = path.crest + reach;
     let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
     /* Each chord CLIPPED to the stretch the crest touches: a thinned path
@@ -705,7 +790,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       }
     }
     if (left > right) return null;
-    const pad = 3 * path.sigma + path.push + dotPeak + step + 2;
+    const pad = linkPad(path);
     return { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
   };
   /* Once a frame, after whatever else it drew: the crests' old and new boxes,
@@ -1436,6 +1521,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     y: number,
     t: number,
     dip: number,
+    cell = -1,
   ) => {
     let wave = 0; // summed crest intensity for this dot
     let px = x;
@@ -1535,41 +1621,23 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     }
     px += selectedPushX;
     py += selectedPushY;
-    let linkWave = 0;
-    for (let k = 0; k < links.length; k++) {
-      const path = links[k];
-      const box = path.box;
-      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue;
-      const best = nearLink(x, y, path);
-      const ox = linkOX, oy = linkOY;
-      const w2 = path.spread * path.spread;
-      if (best > 9 * w2) continue;
-      /* A LINK LIGHTS ITS OWN NARROW STRIP, the way a surface lights round
-         itself: within one and a half widths of the path the dots come up and
-         the fabric draws, so two linked surfaces read as joined by a lit seam
-         of the same mesh. A moving link keeps a little under half of that at
-         rest and the crest brings the rest as it passes. Worked out HERE, from
-         the one measure the push takes, and not in `focusAt` a second time. */
-      const pulse = path.motion && linksMoving ? crestAt(path, linkAlong) : 0;
-      const reach = 3 * path.sigma;
-      if (best < reach * reach) {
-        const lit = focusFalloff(best, reach, reach * reach) * (path.motion && linksMoving ? 0.45 + 0.55 * pulse : 0.8);
-        if (lit > t) t = lit;
-        if (lit > fabricFocus) fabricFocus = lit;
+    let lift = 0;
+    let crest = 0;
+    if (links.length) {
+      if (cell >= 0 && cell < stillKnown.length) {
+        if (!stillKnown[cell]) { linkAt(x, y, false); stillLift[cell] = linkRest; stillKnown[cell] = 1; }
+        lift = stillLift[cell];
+      } else { linkAt(x, y, false); lift = linkRest; }
+      if (linksMoving) {
+        linkAt(x, y, true);
+        if (linkRest > lift) lift = linkRest;
+        crest = linkWave;
+        px += linkPushX;
+        py += linkPushY;
       }
-      const s2 = path.sigma * path.sigma;
-      const bell = Math.exp(-best / (2 * s2));
-      /* THE CREST IS LIGHT ONLY. The parting stays as it is while the crest
-         passes, so a crest frame changes nothing beyond the vein's own three
-         widths, and that strip is all a crest frame repaints. */
-      const lift = path.motion && linksMoving ? LINK_LIFT / 3 + (1 - LINK_LIFT / 3) * pulse : LINK_LIFT;
-      linkWave = Math.max(linkWave, bell * lift);
-      const d = Math.sqrt(best);
-      if (d > 0.01) {
-        const m = path.push * Math.exp(0.5 - best / (2 * w2)) / path.spread;
-        px += ox * m;
-        py += oy * m;
-      }
+      /* The channel is lit wherever it runs: a link across the dark far
+         field still shows its line, and its crest has light to lift. */
+      if (lift > t) t = lift;
     }
     if (cursorScale > 0 && cursorWeight > 0 && focusShapeWeight < 1) {
       const dx = px - fx;
@@ -1584,7 +1652,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         py += dy * scale;
       }
     }
-    const waveLift = Math.min(Math.max(wave, selectedWave, linkWave), 1); // overlapping fields cannot add brightness
+    const waveLift = Math.min(Math.max(wave, selectedWave, crest), 1); // overlapping fields cannot add brightness
     let alpha = baseAlpha + (peakAlpha - baseAlpha) * t + waveLift * rippleBoost;
     /* A held area clears the dots inside it. Fade and shrink each dot by
        its final displaced centre, so none can leak across the edge. The
@@ -1605,28 +1673,22 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       dBaseFabricAlpha = 0;
       return;
     }
-    /* ═══ EXCEPT ALONG A LINK, WHOSE VEIN RISES ABOVE THE PEAK ═══
-       Two linked surfaces sit in each other's light, where every dot is
-       already at the peak, so a link held to it would vanish exactly where it
-       matters. Its own dots may go up to 1.8× the peak at the centre of the
-       vein, and grow by up to a third, and nowhere else does anything change:
-       the field's brightest dot is still the one the host set, off the seam. */
-    if (linkWave > 0) alpha += linkWave * peakAlpha * LINK_OVER;
-    const cap = peakAlpha * (1 + LINK_OVER * linkWave);
-    if (alpha > cap) alpha = cap; // never brighter than the established peak, off a link
+    if (alpha > peakAlpha) alpha = peakAlpha; // never brighter than the established peak
     /* A link belongs to the bright core, while a dot remains visible into
        the far field. Squaring the light's share removes the baseline link
        without dimming the centre or introducing a hard edge. */
     const fabricLight = Math.max(0, Math.min(1, (alpha - baseAlpha) * fabricRangeInverse));
-    dBaseFabricAlpha = alpha * fabricLight * fabricLight * fabricFocus;
+    /* A channel draws the fabric's lines along itself, and a crest lights
+       them as it passes, so the wave reads as the fabric bending. */
+    dBaseFabricAlpha = alpha * fabricLight * fabricLight * Math.max(fabricFocus, lift, crest);
     dFabricAlpha = dBaseFabricAlpha;
     const warm = Math.min(1, t * tint + waveLift * tint);
     const dr = (fg[0] + (primary[0] - fg[0]) * warm) | 0;
     const dg = (fg[1] + (primary[1] - fg[1]) * warm) | 0;
     const db = (fg[2] + (primary[2] - fg[2]) * warm) | 0;
     dR = Math.min(
-      dotPeak * (1 + linkWave / 3),
-      dotBase + t * (dotPeak - dotBase) + waveLift * rippleGrow + linkWave * dotPeak / 3,
+      dotPeak,
+      dotBase + t * (dotPeak - dotBase) + waveLift * rippleGrow,
     );
     if (edgeTaper < 1) dR *= Math.sqrt(edgeTaper);
     dStyle = styleFor(dr, dg, db, alpha);
@@ -1651,7 +1713,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
   const stale = (i: number) => {
     const x = cellX[i % cols];
     const y = cellY[(i / cols) | 0];
-    evalDot(x, y, focusAt(x, y), breathDip(i));
+    evalDot(x, y, focusAt(x, y), breathDip(i), i);
     const was = drawnStyle[i];
     if (
       was === dStyle &&
@@ -1743,7 +1805,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     /* Five crests can each push a dot, and the selected rim and hand can
        push once more. Search original centres only where a drawn circle
        could reach this damage; the exact tile test below rejects the rest. */
-    const reach = 6 * Math.abs(ripplePush) + Math.max(0, cursorPush) + dotPeak + 1;
+    const reach = 6 * Math.abs(ripplePush) + linkReach + Math.max(0, cursorPush) + dotPeak + 1;
     const c0 = Math.max(0, Math.floor((minCol * step - reach) / step));
     const r0 = Math.max(0, Math.floor((minRow * step - reach) / step));
     const c1 = Math.min(cols, Math.ceil(((maxCol + 1) * step + reach) / step));
@@ -1797,7 +1859,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     fabricCtx.lineCap = "round";
     /* Two neighbouring dots determine each edge's tangent. Cover their
        displacement as well as the edge itself in a clipped repaint. */
-    const bendReach = 6 * Math.abs(ripplePush) + Math.max(0, cursorPush);
+    const bendReach = 6 * Math.abs(ripplePush) + linkReach + Math.max(0, cursorPush);
     const reach = 2 * step + 2 * bendReach + 2;
     const c0 = Math.max(0, Math.floor((x0 - reach - gridX) / step));
     const r0 = Math.max(0, Math.floor((y0 - reach - gridY) / step));
@@ -1951,7 +2013,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       return;
     }
     let x0 = width, y0 = height, x1 = 0, y1 = 0;
-    const pad = 2 * step + 2 * (6 * Math.abs(ripplePush) + Math.max(0, cursorPush)) + 2;
+    const pad = 2 * step + 2 * (6 * Math.abs(ripplePush) + linkReach + Math.max(0, cursorPush)) + 2;
     const include = (left: number, top: number, right: number, bottom: number) => {
       x0 = Math.min(x0, left - pad);
       y0 = Math.min(y0, top - pad);
@@ -2387,6 +2449,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       fabricDirty = new Int32Array(n);
       dirty = new Int32Array(n);
     }
+    forgetStill(); // the cells moved, so every cached push is somewhere else
   };
 
   /* ═══ AND THE BREATH DOES NOT COST THE FIELD ITS SLEEP ════════════════
