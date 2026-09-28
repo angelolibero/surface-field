@@ -21,13 +21,14 @@ export type SurfaceFieldRect = {
 
 /**
  * A connection between two surfaces, drawn as a channel of the field's own
- * dots along a path: only the dots on the path answer it. At rest it is a
- * thin, slightly brighter line; if it moves, the wave a click sends runs
- * along it, pushing, lifting and tinting the dots it crosses. Coordinates are the scene's (CSS pixels relative to the scene
- * root), so a host that follows a camera sends its links with its scene.
+ * dots along a path: only the dots on the path answer it, lit as a surface's
+ * rim is, moving or not. If it moves, the wave a click sends runs along it,
+ * pushing, lifting and tinting the dots it crosses. Coordinates are the
+ * scene's (CSS pixels relative to the scene root), so a host that follows a
+ * camera sends its links with its scene.
  */
 export type SurfaceFieldLink = {
-  /** Scene ids of the two ends. Without `points`, the path is a soft curve between their centres. */
+  /** Scene ids of the two ends. Without `points`, the path is a soft curve from the edge of one to the edge of the other, aimed centre to centre. */
   from?: string;
   to?: string;
   /** The path itself, as a polyline in the scene root's CSS pixels, when the host already has one (a React Flow edge). Wins over `from`/`to`. */
@@ -38,6 +39,14 @@ export type SurfaceFieldLink = {
   motion?: "still" | "loop" | "bounce";
   /** Speed of the wave in CSS pixels per second. Default 220. */
   speed?: number;
+  /**
+   * Moving links that share a sequence carry ONE wave through them, in the
+   * order they are listed: it leaves one link's far end as it enters the
+   * next one's, as a signal passing through the surface they share. The
+   * first link of a sequence sets its motion, speed and direction. Without
+   * a sequence each link carries its own wave.
+   */
+  sequence?: string;
   /** How strong the wave is: 1 moves a dot as far as a click's ring does (`ripplePush`). Default 1, up to 4; 0 hides the link. */
   strength?: number;
 };
@@ -50,8 +59,12 @@ export type SurfaceFieldScene = {
 
 export type SurfaceFieldFootprint = {
   pointerId: number;
-  /** Footprints are viewport CSS rectangles, such as getBoundingClientRect returns. */
-  rects: readonly SurfaceFieldRect[];
+  /**
+   * Footprints are viewport CSS rectangles, such as getBoundingClientRect
+   * returns. A rect that names its scene `id` is that object's live shape: a
+   * link to it follows the hand until the scene catches up.
+   */
+  rects: readonly (SurfaceFieldRect & { id?: string })[];
   ids?: readonly string[];
   initial?: true;
   /** Suppress the held press ring while another gesture owns that press. */

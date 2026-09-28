@@ -48,7 +48,7 @@ Create a controller once for each field instance and pass it as `controller`. It
 | Method | Coordinates and behavior |
 | --- | --- |
 | `setScene({ root, rects })` | Each `{ id, parent, left, top, right, bottom }` rectangle is in CSS pixels relative to `root`'s border box. The field converts it to its own canvas box when drawing. |
-| `setFootprint({ pointerId, rects, ids?, initial?, suppressRipple? })` | Rectangles are viewport CSS pixels. `initial: true` reuses the press capture box. `suppressRipple` removes the held ring when another gesture owns that press. `ids` identifies carried scene objects. |
+| `setFootprint({ pointerId, rects, ids?, initial?, suppressRipple? })` | Rectangles are viewport CSS pixels. `initial: true` reuses the press capture box. `suppressRipple` removes the held ring when another gesture owns that press. `ids` identifies carried scene objects. A rect may name its own scene `id`: it is then that object's live shape, and links to it follow the hand until the next scene arrives after the gesture. |
 | `setPreview({ rect, committed? })` | The rectangle is viewport CSS pixels. `null` ends the preview; `committed` lets its light fade after commitment. |
 | `refreshTheme()` | Rereads inherited color and accent, then repaints even if the motion loop is asleep. |
 | `setViewport({ x, y, zoom })` | Same meaning as the `viewport` prop. Retained like the scene and replayed on attachment. After the first call the controller owns the camera and the prop is ignored for that field. Calls within one frame coalesce into one repaint. |
@@ -56,16 +56,17 @@ Create a controller once for each field instance and pass it as `controller`. It
 
 ### Links
 
-A link joins two surfaces with a channel of the field's own dots: only the dots that lie on the path answer it. At rest the channel is a thin, slightly brighter line of dots, with the connected lines along it. A moving link sends the same wave a click sends, run along the path instead of out from a point: a crest of the ripple's own profile, half its `rippleWidth`, that pushes the dots ahead by `ripplePush`, lifts them with `rippleBoost` and `rippleGrow`, and bows back from the path like a piece of a ring. With `ripplePush={0}` the crest lights the channel but moves nothing.
+A link joins two surfaces with a channel of the field's own dots: only the dots that lie on the path answer it. Moving or not, the channel is lit as a surface's rim is: a line of dots one or two wide in full light, with the connected lines along it. A `strength` under `1` dims it. A moving link sends the same wave a click sends, run along the path instead of out from a point: a crest of the ripple's own profile, half its `rippleWidth`, that pushes the dots ahead by `ripplePush`, lifts them with `rippleBoost` and `rippleGrow`, and bows back from the path like a piece of a ring. With `ripplePush={0}` the crest lights the channel but moves nothing.
 
 | Field | Meaning |
 | --- | --- |
-| `from`, `to` | Scene ids of the two ends. Without `points` the path is a soft curve between their centres, and it follows them as the scene changes. |
+| `from`, `to` | Scene ids of the two ends. Without `points` the path is a soft curve aimed from one centre to the other and cut at the two shapes, so it runs only where the field shows it; it follows them as the scene changes. |
 | `points` | The path itself, a polyline in the scene root's CSS pixels, when the host already has one (for example a React Flow edge, sampled from its SVG path). Wins over `from`/`to`. Dense samples along straight runs are thinned automatically. |
 | `width` | Width of the wave's corridor in CSS pixels. Default `56`, about three dots across at the default spacing; the resting line is half as wide. |
 | `strength` | How strong the wave is. `1` moves a dot as far as a click's ring does (`ripplePush`); up to `4`. `0` hides the link. |
 | `motion` | `"still"` (default), `"loop"` for a lift running from `from` to `to`, or `"bounce"` for one going back and forth. |
 | `speed` | Wave speed in CSS pixels per second. Default `220`. |
+| `sequence` | Moving links that share a sequence carry one wave through them, in the order they are listed, as a signal passing from surface to surface. The first link of a sequence sets its motion, speed and direction. Without one, each link carries its own wave, so links from one surface to several send their waves out together. |
 
 Still links cost nothing once drawn and never wake the loop. A moving link keeps the loop at 30 wave frames a second, dozing in between, and repaints only the channel's stretch under the crest; with the `worker` prop that work is off the main thread. Reduced motion and `still` draw links without motion. Hosts that do not call `setLinks` see no change.
 

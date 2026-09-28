@@ -76,8 +76,8 @@ export type FieldSettings = {
   reset: () => void; copyCode: () => void;
   /** The docked sidebar, held here so it stays open or shut across tabs. */
   sidebar: boolean; setSidebar: (open: boolean) => void;
-  /** The demo's links, shared by both tabs: one trigger, and how strong and how fast their wave is. They are the scene's, not the field's props, so Copy config leaves them out. */
-  links: boolean; setLinks: (on: boolean) => void;
+  /** The demo's links, shared by both tabs: always drawn, and whether a wave runs along them, how strong and how fast. They are the scene's, not the field's props, so Copy config leaves them out. */
+  linkWave: boolean; setLinkWave: (on: boolean) => void;
   linkStrength: number; setLinkStrength: (value: number) => void;
   linkSpeed: number; setLinkSpeed: (value: number) => void;
 };
@@ -88,7 +88,7 @@ export function useFieldSettings(): FieldSettings {
   const [accent, setAccent] = React.useState<Accent>(null);
   const [copied, setCopied] = React.useState(false);
   const [sidebar, setSidebar] = React.useState(true);
-  const [links, setLinks] = React.useState(true);
+  const [linkWave, setLinkWave] = React.useState(true);
   /* The demo starts a little above the package's default, a click's ring and a
      half, so the wave is seen at once on a quiet field. */
   const [linkStrength, setLinkStrength] = React.useState(1.5);
@@ -106,7 +106,7 @@ export function useFieldSettings(): FieldSettings {
   const reset = React.useCallback(() => {
     setPreset("workspace");
     setAccent(null);
-    setLinks(true);
+    setLinkWave(true);
     setLinkStrength(1.5);
     setLinkSpeed(220);
   }, [setPreset]);
@@ -123,7 +123,7 @@ export function useFieldSettings(): FieldSettings {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar, links, setLinks, linkStrength, setLinkStrength, linkSpeed, setLinkSpeed };
+  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar, linkWave, setLinkWave, linkStrength, setLinkStrength, linkSpeed, setLinkSpeed };
 }
 
 /* ── The sidebar. ── */
@@ -221,9 +221,9 @@ function ControlPanel({ settings, intro, dark, setDark, onReset, onClose }: Pane
       {/* On is Ambient's depth; the slider then only tunes it and never reaches 0, which is what off is for. */}
       <SwitchRow id="breathe" label="Breathing dots" description="Let the dots fade in and out" checked={config.breathe > 0} onChange={on => change("breathe", on ? 0.4 : 0)} />
       {config.breathe > 0 && <SliderRow id="breathe-depth" label="Breath depth" value={Math.round(config.breathe * 100)} min={5} max={100} step={5} unit="%" onChange={value => change("breathe", value / 100)} />}
-      <SwitchRow id="links" label="Link wave" description="A wave between linked surfaces" checked={settings.links} onChange={settings.setLinks} />
-      {settings.links && <SliderRow id="link-strength" label="Wave strength" value={Math.round(settings.linkStrength * 100)} min={25} max={400} step={25} unit="%" onChange={value => settings.setLinkStrength(value / 100)} />}
-      {settings.links && <SliderRow id="link-speed" label="Wave speed" value={settings.linkSpeed} min={60} max={800} step={20} unit=" px/s" onChange={settings.setLinkSpeed} />}
+      <SwitchRow id="links" label="Link wave" description="A wave between linked surfaces" checked={settings.linkWave} onChange={settings.setLinkWave} />
+      {settings.linkWave && <SliderRow id="link-strength" label="Wave strength" value={Math.round(settings.linkStrength * 100)} min={25} max={400} step={25} unit="%" onChange={value => settings.setLinkStrength(value / 100)} />}
+      {settings.linkWave && <SliderRow id="link-speed" label="Wave speed" value={settings.linkSpeed} min={60} max={800} step={20} unit=" px/s" onChange={settings.setLinkSpeed} />}
       <SwitchRow id="still" label="Still field" description="Render a static texture" checked={config.still} onChange={value => change("still", value)} />
     </div>
   </div>;
