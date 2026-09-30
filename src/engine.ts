@@ -175,10 +175,114 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
   const floorRef = memory.floor;
   const viewportProp = { current: o.viewport };
   const canvas = env.canvas;
-  const ctx = canvas.getContext("2d") as Ctx | null;
-  if (!ctx) return null;
+  const shownCtx = canvas.getContext("2d") as Ctx | null;
+  if (!shownCtx) return null;
+  const isLost = (c: Ctx | null) => (c as { isContextLost?: () => boolean } | null)?.isContextLost?.() === true;
+  /* ═══ THE TRACE, OFF UNLESS SOMEBODY ASKS ═══════════════════════════════
+     A host that is hunting a drawing fault sets `SURFACE_FIELD_TRACE` on the
+     global of the thread the engine runs in (the worker's own, on the worker
+     path) and gets one `console.debug` line per event that can change what
+     the canvas holds: start, resize, full paint, trim, sleep, wake, a lost
+     or restored context, dispose. Each line carries the backing size and
+     whether the context is lost, so a timeline can be laid beside a GPU
+     log. Off, it is one property read per event, and the events are rare. */
+  const traceId = Math.random().toString(36).slice(2, 6);
+  const trace = (event: string, detail?: Record<string, unknown>) => {
+    if (!(globalThis as { SURFACE_FIELD_TRACE?: boolean }).SURFACE_FIELD_TRACE) return;
+    console.debug(`surface-field ${traceId} ${event} ${JSON.stringify({
+      ...detail,
+      backing: [canvas.width, canvas.height],
+      lost: isLost(shownCtx),
+    })}`);
+  };
   const fabric = connected ? env.fabric : null;
-  const fabricCtx = (fabric?.getContext("2d") ?? null) as Ctx | null;
+  const shownFabricCtx = (fabric?.getContext("2d") ?? null) as Ctx | null;
+  /* ═══ THE PICTURE IS KEPT HERE, AND THE CANVAS ON SCREEN ONLY SHOWS IT ══
+     .
+     Every pass below draws only what changed, so the canvas has to hold the
+     previous frame for the next one to be right. A canvas on screen does not
+     promise that. On the worker path its picture lives in buffers the
+     compositor takes and hands back, and when that copy-on-write fails (the
+     GPU process logs `non-existent mailbox` from the worker's thread, the
+     dots and the fabric in the same millisecond) the next buffer starts
+     BLACK and only the cells the light repaints come back: a dark field with
+     a staircase edge, until something paints the whole of it.
+     .
+     So each layer draws on a MASTER it owns: an OffscreenCanvas created here
+     and never handed to the compositor, whose picture nothing but this file
+     can take away. After a frame has drawn, the master is PRESENTED to the
+     canvas on screen, 1:1 at the same size with `copy`, which replaces every
+     pixel the visible buffer holds. The picture is the same bytes, drawn by
+     the same calls on the same rasteriser, and a visible buffer that was
+     lost is repaired by the next present instead of being built on.
+     .
+     THE PRICE is one full-size texture copy per layer per PAINTED frame (a
+     frame that drew nothing presents nothing, so a field at rest still costs
+     nothing), and a second backing per layer: backing width x height x 4
+     bytes each, held for as long as the field lives.
+     .
+     Where there is no OffscreenCanvas (an old engine, a test's fake) the
+     layers draw on the visible canvas directly, exactly as before. */
+  type Master = SurfaceFieldCanvas & Partial<EventTarget>;
+  const MasterCanvas = (globalThis as { OffscreenCanvas?: new (w: number, h: number) => Master }).OffscreenCanvas;
+  /* Born empty: the first `resize` then takes the full road and paints it,
+     rather than trusting a visible canvas that may already be the right
+     size and hold another engine's picture. */
+  const newMaster = () => {
+    const master = MasterCanvas ? new MasterCanvas(0, 0) : null;
+    const draw = (master?.getContext("2d") ?? null) as Ctx | null;
+    return master && draw ? { master, draw } : null;
+  };
+  const dotsMaster = newMaster();
+  const fabricMaster = shownFabricCtx ? newMaster() : null;
+  /* Both layers or neither: one path to reason about, never half of each. */
+  const retained = Boolean(dotsMaster && (!shownFabricCtx || fabricMaster));
+  type Layer = { shown: SurfaceFieldCanvas; view: Ctx; master: Master | null; draw: Ctx };
+  const layers: Layer[] = [
+    { shown: canvas, view: shownCtx, master: retained ? dotsMaster!.master : null, draw: retained ? dotsMaster!.draw : shownCtx },
+  ];
+  if (fabric && shownFabricCtx) layers.push({
+    shown: fabric, view: shownFabricCtx,
+    master: retained ? fabricMaster!.master : null, draw: retained ? fabricMaster!.draw : shownFabricCtx,
+  });
+  /* What every pass draws on: the master, or the visible canvas when there is none. */
+  const ctx = layers[0].draw;
+  const fabricCtx = layers[1]?.draw ?? null;
+  /* The canvas each layer's picture lives in, for its backing size. */
+  const paper = layers[0].master ?? canvas;
+  const fabricPaper = layers[1] ? layers[1].master ?? layers[1].shown : null;
+  /* A layer is ONE size: the master and the canvas that shows it are sized
+     together, or a present would stretch or crop. */
+  const sizeLayer = (layer: Layer | undefined, w: number, h: number) => {
+    if (!layer) return;
+    layer.shown.width = w;
+    layer.shown.height = h;
+    if (layer.master) {
+      layer.master.width = w;
+      layer.master.height = h;
+    }
+  };
+  /* Set by every draw on a master, cleared by the present that shows it. */
+  let unshown = false;
+  const present = () => {
+    if (!unshown) return;
+    unshown = false;
+    for (const layer of layers) {
+      const master = layer.master;
+      /* A zero-sized canvas cannot be drawn from, and there is nothing to show. */
+      if (!master || !master.width || !master.height) continue;
+      /* A master that lost its context holds no picture, and `copy` would
+         put that emptiness over a visible canvas that may still be right.
+         Its restore repaints in full and presents then. */
+      if (isLost(layer.draw)) continue;
+      /* The view's transform is never written, so it is the identity every
+         reset leaves; the composite is set each time because a resize, a
+         trim or a restore resets it to `source-over`, which would blend the
+         picture over what the lost buffer holds instead of replacing it. */
+      layer.view.globalCompositeOperation = "copy";
+      layer.view.drawImage(master as unknown as CanvasImageSource, 0, 0);
+    }
+  };
 
   const prefersReduced = o.prefersReduced;
   /* ═══ THREE STATES, NOT TWO, SINCE THE FIELD LEARNED TO BREATHE ══════
@@ -1134,6 +1238,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     sceneDirty = true;
     const rect = env.box();
     canvasBox = rect;
+    trace("resize", { box: [Math.round(rect.width), Math.round(rect.height)], dpr: env.dpr() });
     /* ═══ AND AN ADDRESS BAR SLIDING IS NOT A RESIZE ═════════════════════
        .
        WHAT THE TWO LINES BELOW COST. Writing `canvas.width` throws the
@@ -1157,12 +1262,12 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     const nextW = Math.round(rect.width * dpr);
     const nextH = Math.round(rect.height * dpr);
     if (
-      canvas.width === nextW &&
-      canvas.height >= nextH &&
-      canvas.height - nextH < 120 * dpr
+      paper.width === nextW &&
+      paper.height >= nextH &&
+      paper.height - nextH < 120 * dpr
     ) {
       width = rect.width;
-      height = canvas.height / dpr;
+      height = paper.height / dpr;
       /* AND THE COLOUR IS STILL READ, WHICH THIS GUARD SKIPPED. `fg` and
          `primary` are locals of this effect seeded to a light-mode default,
          and the effect re-runs on any of its fourteen dependencies. A re-run
@@ -1173,9 +1278,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       readColor();
       layoutCells(false);
       prevBox = null;
-      if (fabric && fabricCtx && (fabric.width !== nextW || fabric.height !== canvas.height)) {
-        fabric.width = nextW;
-        fabric.height = canvas.height;
+      if (fabricPaper && fabricCtx && (fabricPaper.width !== nextW || fabricPaper.height !== paper.height)) {
+        sizeLayer(layers[1], nextW, paper.height);
         fabricCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
         render();
       }
@@ -1183,12 +1287,10 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     }
     width = rect.width;
     height = rect.height;
-    canvas.width = nextW;
-    canvas.height = nextH;
+    sizeLayer(layers[0], nextW, nextH);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (fabric && fabricCtx) {
-      fabric.width = nextW;
-      fabric.height = nextH;
+    if (fabricCtx) {
+      sizeLayer(layers[1], nextW, nextH);
       fabricCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     lastStyle = ""; // the new backing store came with a fresh context
@@ -1874,6 +1976,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       if (drawnStyle[i]) markCircle(drawnX[i], drawnY[i], drawnR[i]);
     }
     if (!count) return;
+    unshown = true;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     const clip = new Path2D();
@@ -1927,9 +2030,10 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     if (!fabricCtx || x1 <= x0 || y1 <= y0) return;
     const left = Math.max(0, Math.floor(x0 * dpr));
     const top = Math.max(0, Math.floor(y0 * dpr));
-    const right = Math.min(fabric!.width, Math.ceil(x1 * dpr));
-    const bottom = Math.min(fabric!.height, Math.ceil(y1 * dpr));
+    const right = Math.min(fabricPaper!.width, Math.ceil(x1 * dpr));
+    const bottom = Math.min(fabricPaper!.height, Math.ceil(y1 * dpr));
     if (right <= left || bottom <= top) return;
+    unshown = true;
     fabricCtx.save();
     fabricCtx.setTransform(1, 0, 0, 1, 0, 0);
     fabricCtx.clearRect(left, top, right - left, bottom - top);
@@ -2199,8 +2303,10 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       change seen with no loop running. Everything else goes through
       `sweep`, which draws the same picture by drawing only its changes. */
   const render = () => {
+    trace("render");
     paints++;
     trimLater();
+    unshown = true;
     ctx.clearRect(0, 0, width, height);
     prepareRipples();
     fabricDirtyCount = 0;
@@ -2665,9 +2771,10 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     readTintHue();
   };
 
-  const frame = (time: number) => {
+  const advance = (time: number) => {
     if (!running) return;
     now = time;
+    heal("frame");
     advancePreview(time);
     advanceSelection(time);
     if (linksDirty) buildLinks();
@@ -2791,6 +2898,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     resting = settled;
     if (asleep) {
       raf = 0; // asleep, not stopped: `wake` picks it back up
+      trace("sleep");
       return;
     }
     /* NOTHING BUT THE BREATH IS LEFT TO HAPPEN when the light is at rest,
@@ -2809,6 +2917,13 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       return;
     }
     raf = env.frame(frame);
+  };
+  /* A frame draws in several passes (the light, the breath, the crests) and
+     returns from five places; the present is here, after all of them and
+     once, so no return path can leave a drawn frame unshown. */
+  const frame = (time: number) => {
+    advance(time);
+    present();
   };
 
   /* ═══ THE BREATH'S ALARM CLOCK ═══════════════════════════════════════
@@ -2856,16 +2971,22 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
      away with every buffer it had cached. So the width goes one pixel wide
      and back, two resets and no allocation between them.
      .
-     AND THE PICTURE IS CARRIED ACROSS, NOT DRAWN AGAIN. A frame built by
-     `sweep` is not bit for bit the frame `render` builds from the same
-     state: a cell is only repainted when its dot comes out different, so a
-     change under one step of alpha stays as it was drawn, and a from-scratch
-     repaint moves those pixels by one. Measured on the worker path, 246
-     pixels of 3.6 million. A trim is not allowed to move one, so the canvas
-     is copied into a scratch canvas first and copied back 1:1 with `copy`,
-     which is the old texture exactly, and every box the next partial frame
-     trusts stays true. Where there is no OffscreenCanvas to copy through it
-     falls back to `render`, the repaint a resize already makes.
+     AND NOT ONE PIXEL MOVES, BECAUSE THE PICTURE IS NOT IN THAT CANVAS.
+     It is in the layer's master (see `present`), which the trim does not
+     touch: the visible canvas is reset, which gives its buffers back, and
+     the master is presented into the new one, 1:1 with `copy`. That is the
+     frame that was on screen, byte for byte, and every box the next partial
+     frame trusts stays true. (A frame `render` built from scratch would not
+     be: a cell is only repainted when its dot comes out different, so a
+     change under one step of alpha stays as it was drawn, and a full repaint
+     moves those pixels by one, 246 of 3.6 million measured.) The copy used
+     to go the other way, out of the visible canvas into a scratch one and
+     back, and on a transferred canvas that read can find the image already
+     gone to the compositor (`glCopySubTexture: unknown source image
+     mailbox`): an empty scratch was put back over the whole field. A master
+     is never handed to the compositor, so there is nothing for the read to
+     miss. Where there is no master the trim repaints in full, the repaint a
+     resize already makes.
      .
      AFTER TRIM_IDLE_MS WITH NO PAINT, AND ONLY THEN. A burst grows the pipe
      back to five within a few frames, so a trim between two gestures of the
@@ -2874,15 +2995,14 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
      memory it waits on was held for ever before. A field that breathes
      paints every 45 ms and never gets here: its pipe is in use. A carry is
      left alone, because the hand is still holding the light.
-     (Measured at rest: 138 MB down to 27.6.) */
+     (Measured at rest, before the masters: 138 MB down to 27.6. Each
+     master holds one backing on top of that, and a trim leaves it be.) */
   const TRIM_IDLE_MS = 4000;
   let lastPaintAt = 0;
   const trimLater = () => {
     lastPaintAt = env.now();
     if (!trimTimer) trimTimer = env.setTimer(trimIfIdle, TRIM_IDLE_MS);
   };
-  type Scratch = { width: number; getContext(kind: "2d"): Ctx | null };
-  const Scratch = (globalThis as { OffscreenCanvas?: new (w: number, h: number) => Scratch }).OffscreenCanvas;
   const trimIfIdle = () => {
     trimTimer = 0;
     /* Hidden: nothing paints, and the page's own hibernation owns the memory. */
@@ -2892,31 +3012,31 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       trimTimer = env.setTimer(trimIfIdle, carrying ? TRIM_IDLE_MS : TRIM_IDLE_MS - idle);
       return;
     }
-    let carried = true;
-    for (const [c, cx] of fabric && fabricCtx ? [[canvas, ctx], [fabric, fabricCtx]] as const : [[canvas, ctx]] as const) {
-      const w = c.width, h = c.height;
-      const copy = Scratch && w > 0 && h > 0 ? new Scratch(w, h) : null;
-      const copyCtx = copy?.getContext("2d") ?? null;
-      copyCtx?.drawImage(c as unknown as CanvasImageSource, 0, 0);
-      c.width = w + 1;
-      c.width = w;
-      cx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      if (copy && copyCtx) {
-        cx.save();
-        cx.setTransform(1, 0, 0, 1, 0, 0);
-        cx.globalCompositeOperation = "copy";
-        cx.drawImage(copy as unknown as CanvasImageSource, 0, 0);
-        cx.restore();
-        copy.width = 0; // its own texture goes now, not at the next collection
-      } else carried = false;
+    /* A lost canvas takes no paint: the frame that finds it usable again
+       repairs it. */
+    if (!heal("trim")) return;
+    trace("trim");
+    for (const layer of layers) {
+      const w = layer.shown.width;
+      layer.shown.width = w + 1;
+      layer.shown.width = w;
     }
-    lastStyle = ""; // the new backing store came with a fresh context
-    if (!carried) {
-      render();
-      /* That repaint is the trim's own and must not ask for another. */
+    if (retained) {
+      unshown = true;
+      present();
+      /* A repair `heal` just made repainted, and a repaint arms the next
+         trim; this one is that trim already. */
       env.clearTimer(trimTimer);
       trimTimer = 0;
+      return;
     }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fabricCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    lastStyle = ""; // the new backing store came with a fresh context
+    render();
+    /* That repaint is the trim's own and must not ask for another. */
+    env.clearTimer(trimTimer);
+    trimTimer = 0;
   };
 
   /* ═══ AND THE TEXTURE'S OWN LOOP, WHICH IS ONLY THE BREATH ═══════════
@@ -2942,6 +3062,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       renderBreath();
       lastBreath = time;
     }
+    present();
     snooze(time);
   };
 
@@ -2964,6 +3085,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       return;
     }
     if (raf) return;
+    trace("wake");
     resting = false; // the frame it comes back on repaints the light in full
     lastFieldFrameAt = env.now();
     lastCursorFrameAt = lastFieldFrameAt;
@@ -3251,58 +3373,142 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
     if (!looping || !running || (!raf && !timer)) render();
   };
 
-  /* ═══ A LOST CANVAS COMES BACK BLANK, AND ONLY A FULL PAINT REFILLS IT ═══
+  /* ═══ A LOST CANVAS COMES BACK BLANK, AND THE KEPT PICTURE REFILLS IT ═══
      .
      The GPU can take a canvas's backing away: its process restarts, or it
      reclaims memory while an app reloads around it. The browser restores
-     the context by itself, EMPTY and with its state reset, and says so with
-     `contextrestored`. Everything after that here is partial by design (the
-     light's box, the held surface, the crests), so nothing ever repainted
-     the rest: the lost area stayed dark, and a dot came back only where the
-     hand passed, in the staircase of the boxes it swept.
+     the context by itself, EMPTY and with its state reset. Everything after
+     that here is partial by design (the light's box, the held surface, the
+     crests), so nothing ever repainted the rest: the lost area stayed dark,
+     and a dot came back only where the hand passed, in the staircase of the
+     boxes it swept.
      .
-     So a restore is a resize without the reallocation: the transform and
-     the cached fill come back with the fresh state, and one full paint puts
-     every dot back. The listeners cost nothing while nothing is lost, and
-     an engine on a canvas that is no event target (a test's fake) keeps
-     working without them. */
-  const restored = () => {
+     `contextrestored` WAS THE ONLY SIGNAL, AND IT WAS NOT ENOUGH. The
+     staircase was seen again with the GPU process alive the whole time and
+     no restore handled, so the event cannot be trusted to arrive. The field
+     now also asks: `isContextLost()` at the top of every frame and before a
+     trim. It is a flag read, free next to a frame. A loss seen by ANY of the
+     three paths marks the canvas `blank`, and the first frame that finds
+     the context usable again repairs it. A canvas that never loses anything
+     never takes the branch, so the cheap frames stay exactly as cheap.
+     .
+     THE REPAIR IS AS SMALL AS WHAT WAS LOST. A visible canvas that lost its
+     context lost only a copy: its layer's master still holds the picture,
+     so one present puts it back. A master that lost its own, or a visible
+     canvas with no master behind it, lost the picture itself, and only a
+     full paint rebuilds that, which is what a resize already pays.
+     .
+     EACH PATH NAMES ITSELF IN THE TRACE (`SURFACE_FIELD_TRACE`, above): which
+     one saw the loss and which repair followed, so a loss in the field can
+     be read rather than guessed at. Nothing is written to the console
+     unless the host asked for the trace. */
+  let blank = false;
+  /* What the repair owes: 1 a present, 2 a full paint. Only ever raised
+     until it is paid. */
+  const PRESENT = 1, PAINT = 2;
+  let owedRepair = 0;
+  const owe = (repair: number) => { if (repair > owedRepair) owedRepair = repair; };
+  const lost = () => {
+    let gone = false;
+    for (const layer of layers) {
+      if (isLost(layer.view)) { owe(layer.master ? PRESENT : PAINT); gone = true; }
+      if (layer.master && isLost(layer.draw)) { owe(PAINT); gone = true; }
+    }
+    return gone;
+  };
+  const repaintWhole = () => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     fabricCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
     lastStyle = "";
     prevBox = null;
     render();
   };
-  const restorable = [canvas, fabric].filter(Boolean) as Partial<EventTarget>[];
-  for (const target of restorable) target.addEventListener?.("contextrestored", restored);
+  const repair = () => {
+    if (owedRepair === PAINT) repaintWhole();
+    else if (owedRepair === PRESENT) {
+      /* Traced here and not in `present`: that one runs every painted frame. */
+      trace("present", { repair: true });
+      unshown = true;
+    }
+    owedRepair = 0;
+  };
+  /** False while a context is gone; after a loss, the first usable call repairs it. */
+  const heal = (where: string) => {
+    if (lost()) {
+      if (!blank) trace("lost", { where });
+      blank = true;
+      return false;
+    }
+    if (!owedRepair) return true;
+    if (blank) trace("usable", { where, repair: owedRepair === PAINT ? "paint" : "present" });
+    blank = false;
+    repair();
+    return true;
+  };
+  /* The events say which canvas: a visible one with a master behind it owes
+     a present, a master or a lone visible canvas a full paint. */
+  const onLost = (repairs: number) => () => {
+    trace("contextlost");
+    blank = true;
+    owe(repairs);
+    wake(); // the frame that finds it usable again is the one that repairs
+  };
+  const onRestored = (repairs: number) => () => {
+    trace("contextrestored", { lossSeen: blank });
+    blank = false;
+    owe(repairs);
+    repair();
+    present();
+  };
+  const restorable = layers.flatMap(layer => layer.master
+    ? [{ target: layer.shown as Partial<EventTarget>, repairs: PRESENT }, { target: layer.master, repairs: PAINT }]
+    : [{ target: layer.shown as Partial<EventTarget>, repairs: PAINT }],
+  ).map(({ target, repairs }) => ({ target, loss: onLost(repairs), restore: onRestored(repairs) }));
+  for (const { target, loss, restore } of restorable) {
+    target.addEventListener?.("contextlost", loss);
+    target.addEventListener?.("contextrestored", restore);
+  }
 
+  trace("start", { connected: Boolean(fabric), still, breathe, retained });
   resize();
+  present();
+
+  /* ═══ A METHOD THAT PAINTS AT ONCE PRESENTS AT ONCE ═══════════════════
+     The frames present at their own end. These are the host's calls that can
+     draw outside a frame (a resize, a theme with no loop running, a camera,
+     a scene or links under reduced motion or `still`, a cancelled press, a
+     blur that cancels one, the first frame of reduced motion), and each
+     shows what it drew before returning, as the canvas it drew on used to. */
+  const presenting = <A extends unknown[]>(act: (...args: A) => void) => (...args: A) => {
+    act(...args);
+    present();
+  };
 
   return {
     animating,
     looping,
     hearsOut: cursorScale > 0,
-    begin() {
+    begin: presenting(() => {
       /* ONE FRAME AND NO SUBSCRIPTIONS, which is now reduced motion alone:
          nothing on this canvas will ever change again. A replayed scene or
          camera may already have woken the loop; a second request here would
          run two frame chains side by side. */
       if (!looping) render();
       else if (!raf) raf = nextFrame();
-    },
-    resize,
-    recolour,
+    }),
+    resize: presenting(resize),
+    recolour: presenting(recolour),
     wake,
     pointerMove: onPointerMove,
     pointerOut: onPointerOut,
     pointerDown: onPointerDown,
     pointerUp: letGo,
-    pointerCancel: cancelPress,
+    pointerCancel: presenting(cancelPress),
     focus: onFocus,
-    blur: onBlur,
+    blur: presenting(onBlur),
     visibility: onVisibility,
     hueAnimation: onHueAnimation,
-    signal(signal) {
+    signal: presenting((signal: SurfaceFieldEngineSignal) => {
       if (signal.kind === "scene") onScene(signal.value);
       else if (signal.kind === "footprint") onFootprint(signal.value);
       else if (signal.kind === "preview") onPreview(signal.value);
@@ -3314,8 +3520,8 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
         onViewport(signal.value);
       } else if (signal.kind === "links") onLinks(signal.value);
       else recolour();
-    },
-    viewportProp(next) { if (!viewFromController) onViewport(next); },
+    }),
+    viewportProp: presenting((next: SurfaceFieldViewport | undefined) => { if (!viewFromController) onViewport(next); }),
     ripple(x, y) {
       /* THE RING PROP IS THE LIGHT'S. A texture has no focal for a ring to go
          out from and `drainPending` runs inside `frame`, so it queues and
@@ -3324,6 +3530,7 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       if (animating) wake();
     },
     dispose() {
+      trace("dispose");
       running = false;
       env.cancelFrame(raf);
       raf = 0;
@@ -3331,7 +3538,18 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       timer = 0;
       env.clearTimer(trimTimer);
       trimTimer = 0;
-      for (const target of restorable) target.removeEventListener?.("contextrestored", restored);
+      for (const { target, loss, restore } of restorable) {
+        target.removeEventListener?.("contextlost", loss);
+        target.removeEventListener?.("contextrestored", restore);
+      }
+      /* A master is a full backing per layer (9.2 MB at 1920 by 1200), and
+         a field is disposed and started again on every change of its host's
+         inputs, twice on a strict mount. Zero sizes give the texture back
+         now instead of at whatever collection finds the dead engine. */
+      for (const layer of layers) if (layer.master) {
+        layer.master.width = 0;
+        layer.master.height = 0;
+      }
     },
   };
 }

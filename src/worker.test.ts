@@ -36,7 +36,7 @@ const recorder = (name: string, log: Log) => new Proxy({} as Record<string, unkn
   set: (_, key, value) => { log.push(`${name}.${String(key)}=${fmt(value)}`); return true; },
 });
 
-const fakeCanvas = (name: string, log: Log): SurfaceFieldCanvas => {
+const fakeCanvas = (name: string, log: Log): SurfaceFieldCanvas & { toString(): string } => {
   let width = 300, height = 150;
   const ctx = recorder(name, log);
   return {
@@ -49,15 +49,20 @@ const fakeCanvas = (name: string, log: Log): SurfaceFieldCanvas => {
   };
 };
 
-/* The trim's scratch canvas (`engine.ts#trimIfIdle`), recorded into the log of
-   the field being driven, so its copies sit in order with the canvases' calls. */
+/* The layers' masters (`engine.ts#present`), recorded into the log of the
+   field being driven, so their drawing and the presents sit in order with the
+   visible canvases' calls. The engine makes the dots' master first. */
 let activeLog: Log = [];
-class FakeScratch {
+const mastersMade = new WeakMap<Log, number>();
+class FakeMaster {
   constructor(width: number, height: number) {
     const log = activeLog;
-    log.push(`scratch(${width},${height})`);
-    const canvas = fakeCanvas("scratch", log);
-    return canvas as unknown as FakeScratch;
+    const n = mastersMade.get(log) ?? 0;
+    mastersMade.set(log, n + 1);
+    const name = n === 0 ? "dotsMaster" : "fabricMaster";
+    log.push(`${name}(${width},${height})`);
+    const canvas = fakeCanvas(name, log);
+    return canvas as unknown as FakeMaster;
   }
 }
 
@@ -374,39 +379,69 @@ describe("SurfaceField on a worker draws what it draws on the page", () => {
     tick(d, t, 300);
   };
 
-  it("gives a resting field's buffers back once, carrying the picture across, the same on both threads", () => {
-    vi.stubGlobal("OffscreenCanvas", FakeScratch);
+  it("gives a resting field's buffers back once and presents the kept picture into the new ones, the same on both threads", () => {
+    /* NOT ONE PIXEL MOVES AND NOTHING IS DRAWN AGAIN. The picture lives in
+       the masters, which the trim does not touch: the visible canvases are
+       reset and the masters copied back into them 1:1. */
+    vi.stubGlobal("OffscreenCanvas", FakeMaster);
     const { direct, worker } = both({ ...OPTIONS, breathe: 0 }, resting);
     expect(worker.errors).toEqual([]);
     expect(trims(direct.log, "dots")).toBe(1);
     expect(trims(direct.log, "fabric")).toBe(1);
-    const at = direct.log.indexOf("scratch(1400,920)");
-    const copied = (name: string) => [
-      "scratch(1400,920)",
-      `scratch.drawImage(${name},0,0)`,
-      `${name}.width=1401`,
-      `${name}.width=1400`,
-      `${name}.setTransform(2,0,0,2,0,0)`,
-      `${name}.save()`,
-      `${name}.setTransform(1,0,0,1,0,0)`,
-      `${name}.globalCompositeOperation="copy"`,
-      `${name}.drawImage(scratch,0,0)`,
-      `${name}.restore()`,
-      "scratch.width=0",
-    ];
-    expect(direct.log.slice(at, at + 22)).toEqual([...copied("dots"), ...copied("fabric")]);
-    /* Carried, not redrawn: nothing after it touches the canvases again. */
-    expect(direct.log.slice(at + 22)).toEqual([]);
+    const at = direct.log.indexOf("dots.width=1401");
+    expect(direct.log.slice(at)).toEqual([
+      "dots.width=1401", "dots.width=1400", "fabric.width=1401", "fabric.width=1400",
+      "dotsMaster.isContextLost()", 'dots.globalCompositeOperation="copy"', "dots.drawImage(dotsMaster,0,0)",
+      "fabricMaster.isContextLost()", 'fabric.globalCompositeOperation="copy"', "fabric.drawImage(fabricMaster,0,0)",
+    ]);
     expect(same(worker.log, direct.log)).toBe("same");
   });
 
-  it("repaints from scratch after a trim where there is nothing to copy through", () => {
+  it("repaints from scratch after a trim where there is no master to present", () => {
     const { direct, worker } = both({ ...OPTIONS, breathe: 0 }, resting);
     expect(trims(direct.log, "dots")).toBe(1);
+    expect(direct.log.some(line => line.includes("Master"))).toBe(false);
     const at = direct.log.indexOf("dots.width=1401");
-    expect(direct.log.slice(at, at + 3)).toEqual(["dots.width=1401", "dots.width=1400", "dots.setTransform(2,0,0,2,0,0)"]);
+    expect(direct.log.slice(at, at + 6)).toEqual([
+      "dots.width=1401", "dots.width=1400", "fabric.width=1401", "fabric.width=1400",
+      "dots.setTransform(2,0,0,2,0,0)", "fabric.setTransform(2,0,0,2,0,0)",
+    ]);
     expect(direct.log.slice(at).some(line => line.startsWith("dots.clearRect(0,0,700,"))).toBe(true);
     expect(same(worker.log, direct.log)).toBe("same");
+  });
+
+  it("with masters, draws only on them and presents every painted frame once, after its drawing", () => {
+    vi.stubGlobal("OffscreenCanvas", FakeMaster);
+    const { direct, worker } = both(OPTIONS, gesture);
+    expect(worker.errors).toEqual([]);
+    expect(same(worker.log, direct.log)).toBe("same");
+    /* The visible canvases are sized, asked whether they are lost, and shown
+       into, and nothing else. */
+    const visible = direct.log.filter(line => /^(dots|fabric)\./.test(line));
+    const shows = /^(dots|fabric)\.(width|height)=\d+$|^(dots|fabric)\.isContextLost\(\)$|^(dots|fabric)\.globalCompositeOperation="copy"$|^dots\.drawImage\(dotsMaster,0,0\)$|^fabric\.drawImage\(fabricMaster,0,0\)$/;
+    expect(visible.filter(line => !shows.test(line))).toEqual([]);
+    /* Every run of drawing on a master is followed by one present of both
+       layers, and a present never comes without drawing before it. A layer
+       is shown only after its master is found not lost: a lost master holds
+       no picture to show. */
+    const draws = (line: string) => /^(dots|fabric)Master\.(?!width=|height=|isContextLost\(\))/.test(line);
+    const present = [
+      "dotsMaster.isContextLost()", 'dots.globalCompositeOperation="copy"', "dots.drawImage(dotsMaster,0,0)",
+      "fabricMaster.isContextLost()", 'fabric.globalCompositeOperation="copy"', "fabric.drawImage(fabricMaster,0,0)",
+    ];
+    let drew = false, presents = 0;
+    for (let i = 0; i < direct.log.length; i++) {
+      const line = direct.log[i];
+      if (draws(line)) drew = true;
+      else if (line === present[1]) {
+        expect(direct.log.slice(i - 1, i + 5)).toEqual(present);
+        expect(drew).toBe(true);
+        drew = false;
+        presents++;
+      }
+    }
+    expect(drew).toBe(false);
+    expect(presents).toBeGreaterThan(100);
   });
 
   it("never trims a field whose breath keeps it painting", () => {
