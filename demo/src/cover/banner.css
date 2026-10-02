@@ -1,0 +1,15 @@
+/* The X header's stage: 1500×500, the cover's cards and field at a banner's proportions. */
+html, body { margin: 0; height: 500px; overflow: hidden; background: var(--background); }
+.banner { position: relative; width: 1500px; height: 500px; overflow: hidden; background: var(--background); isolation: isolate; }
+.banner::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, var(--background) 0, var(--background) 34%, color-mix(in oklab, var(--background) 55%, transparent) 46%, transparent 58%); }
+.banner .cover-edges { z-index: 2; }
+.banner .cover-node { padding: 22px 20px 16px; }
+.banner .cover-node strong { font-size: 18px; }
+.banner .cover-node small { font-size: 11px; }
+.banner-copy { position: absolute; z-index: 4; left: 96px; top: 92px; width: 560px; }
+.banner-copy h1 { margin: 0; font-family: "Plus Jakarta Sans", Figtree, sans-serif; font-size: 68px; font-weight: 700; line-height: 1; letter-spacing: -0.05em; }
+.banner-copy p { margin: 18px 0 0; color: color-mix(in oklab, var(--foreground) 72%, transparent); font-size: 23px; line-height: 1.3; letter-spacing: -0.015em; max-width: 470px; }
+.banner-copy .cover-list { margin-top: 26px; flex-direction: row; gap: 22px; }
+.banner-copy .cover-list li { font-size: 16px; gap: 10px; }
+.banner-copy .cover-list svg { width: 32px; height: 32px; padding: 7px; border-radius: 9px; }

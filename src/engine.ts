@@ -826,15 +826,6 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       path.box = { left: left - pad, top: top - pad, right: right + pad, bottom: bottom + pad };
       next.push(path);
     }
-    /* A NEW SPEED CARRIES ON FROM WHERE THE WAVE IS. The distance travelled
-       is the clock times the speed plus a phase, so a host that sends the
-       same links with another speed (a slider being dragged) would make every
-       wave jump; the phase is set so the distance stays where it was. Links
-       are matched by their place in the list, as a host resends them. */
-    for (let k = 0; k < next.length && k < before.length; k++) {
-      const old = before[k], path = next[k];
-      path.phase = old.phase + (linkClock / 1000) * (old.speed - path.speed);
-    }
     /* ═══ A SEQUENCE IS ONE WAVE THROUGH SEVERAL LINKS ═══
        Moving links that share a `sequence` are laid end to end in the order
        the host listed them, and one crest runs the whole length: it leaves
@@ -852,6 +843,25 @@ export function startSurfaceField(env: SurfaceFieldEnv, o: SurfaceFieldOptions, 
       path.start = head.total;
       head.total += path.length;
       head.margin = Math.max(head.margin, path.margin);
+    }
+    /* ═══ A REBUILT WAVE CARRIES ON FROM WHERE IT WAS ═══
+       The crest is the distance travelled folded into the cycle, and the
+       cycle is the run's length. A drag or a resize changes that length on
+       every step, so the same distance folded into a new cycle landed
+       anywhere: the wave jumped, and looked as if it started over, for as
+       long as the hand moved. So a head keeps the SHARE of its cycle it had
+       covered, and its phase is set to put it there on the new cycle and at
+       the new speed (a speed slider being dragged is the same case). Links
+       are matched by their place in the list, as a host resends them. */
+    const seconds = linkClock / 1000;
+    const cycleOf = (head: LinkPath) => (head.motion === 2 ? 2 : 1) * (head.total + 2 * head.margin);
+    for (let k = 0; k < next.length && k < before.length; k++) {
+      const path = next[k], old = before[k].head;
+      if (path.head !== path || !path.motion || old.motion !== path.motion) continue;
+      const was = cycleOf(old), cycle = cycleOf(path);
+      if (!(was > 0) || !(cycle > 0)) continue;
+      const share = ((((seconds * old.speed + old.phase) % was) + was) % was) / was;
+      path.phase = share * cycle - seconds * path.speed;
     }
     links = next;
     /* Twice the strongest: two links leaving one surface overlap beside it,

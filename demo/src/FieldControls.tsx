@@ -76,7 +76,9 @@ export type FieldSettings = {
   reset: () => void; copyCode: () => void;
   /** The docked sidebar, held here so it stays open or shut across tabs. */
   sidebar: boolean; setSidebar: (open: boolean) => void;
-  /** The demo's links, shared by both tabs: always drawn, and whether a wave runs along them, how strong and how fast. They are the scene's, not the field's props, so Copy config leaves them out. */
+  /** The demo's links. They are the scene's, not the field's props, so Copy config leaves them out. The playground's row of links is off until asked for (`linkRow`); React Flow's edges are always links. Width, wave, strength and speed are shared by both tabs. */
+  linkRow: boolean; setLinkRow: (on: boolean) => void;
+  linkWidth: number; setLinkWidth: (value: number) => void;
   linkWave: boolean; setLinkWave: (on: boolean) => void;
   linkStrength: number; setLinkStrength: (value: number) => void;
   linkSpeed: number; setLinkSpeed: (value: number) => void;
@@ -88,6 +90,10 @@ export function useFieldSettings(): FieldSettings {
   const [accent, setAccent] = React.useState<Accent>(null);
   const [copied, setCopied] = React.useState(false);
   const [sidebar, setSidebar] = React.useState(true);
+  /* OFF IN THE PLAYGROUND UNTIL ASKED FOR: the first thing a visitor sees is
+     the field itself, not a feature layered on it. */
+  const [linkRow, setLinkRow] = React.useState(false);
+  const [linkWidth, setLinkWidth] = React.useState(56); // the package's default
   const [linkWave, setLinkWave] = React.useState(true);
   /* The demo starts a little above the package's default, a click's ring and a
      half, so the wave is seen at once on a quiet field. */
@@ -106,6 +112,8 @@ export function useFieldSettings(): FieldSettings {
   const reset = React.useCallback(() => {
     setPreset("workspace");
     setAccent(null);
+    setLinkRow(false);
+    setLinkWidth(56);
     setLinkWave(true);
     setLinkStrength(1.5);
     setLinkSpeed(220);
@@ -123,7 +131,7 @@ export function useFieldSettings(): FieldSettings {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar, linkWave, setLinkWave, linkStrength, setLinkStrength, linkSpeed, setLinkSpeed };
+  return { config, preset, accent, copied, setPreset, setAccent, change, reset, copyCode, sidebar, setSidebar, linkRow, setLinkRow, linkWidth, setLinkWidth, linkWave, setLinkWave, linkStrength, setLinkStrength, linkSpeed, setLinkSpeed };
 }
 
 /* ── The sidebar. ── */
@@ -152,9 +160,11 @@ function SwitchRow({ id, label, description, checked, onChange }: {
 type PanelProps = {
   settings: FieldSettings; intro: string; dark: boolean;
   setDark: (value: boolean) => void; onReset?: () => void;
+  /** "optional": the tab's links are switched on by the visitor (the playground). "always": they are the tab's content (React Flow's edges). */
+  links: "optional" | "always";
 };
 
-function ControlPanel({ settings, intro, dark, setDark, onReset, onClose }: PanelProps & { onClose?: () => void }) {
+function ControlPanel({ settings, intro, dark, setDark, onReset, onClose, links }: PanelProps & { onClose?: () => void }) {
   const { config, preset, accent, copied, setPreset, setAccent, change, copyCode } = settings;
   const reset = () => { settings.reset(); onReset?.(); };
   const accentInputId = React.useId();
@@ -221,10 +231,18 @@ function ControlPanel({ settings, intro, dark, setDark, onReset, onClose }: Pane
       {/* On is Ambient's depth; the slider then only tunes it and never reaches 0, which is what off is for. */}
       <SwitchRow id="breathe" label="Breathing dots" description="Let the dots fade in and out" checked={config.breathe > 0} onChange={on => change("breathe", on ? 0.4 : 0)} />
       {config.breathe > 0 && <SliderRow id="breathe-depth" label="Breath depth" value={Math.round(config.breathe * 100)} min={5} max={100} step={5} unit="%" onChange={value => change("breathe", value / 100)} />}
-      <SwitchRow id="links" label="Link wave" description="A wave between linked surfaces" checked={settings.linkWave} onChange={settings.setLinkWave} />
-      {settings.linkWave && <SliderRow id="link-strength" label="Wave strength" value={Math.round(settings.linkStrength * 100)} min={25} max={400} step={25} unit="%" onChange={value => settings.setLinkStrength(value / 100)} />}
-      {settings.linkWave && <SliderRow id="link-speed" label="Wave speed" value={settings.linkSpeed} min={60} max={800} step={20} unit=" px/s" onChange={settings.setLinkSpeed} />}
       <SwitchRow id="still" label="Still field" description="Render a static texture" checked={config.still} onChange={value => change("still", value)} />
+    </div>
+    <Separator />
+    <div className="control-group">
+      <div className="group-title"><span>Links</span></div>
+      {links === "optional" && <SwitchRow id="link-row" label="Linked surfaces" description="Join the surfaces with a channel" checked={settings.linkRow} onChange={settings.setLinkRow} />}
+      {(links === "always" || settings.linkRow) && <>
+        <SliderRow id="link-width" label="Link width" value={settings.linkWidth} min={16} max={160} step={4} unit=" px" onChange={settings.setLinkWidth} />
+        <SwitchRow id="links" label="Link wave" description="A wave between linked surfaces" checked={settings.linkWave} onChange={settings.setLinkWave} />
+        {settings.linkWave && <SliderRow id="link-strength" label="Wave strength" value={Math.round(settings.linkStrength * 100)} min={25} max={400} step={25} unit="%" onChange={value => settings.setLinkStrength(value / 100)} />}
+        {settings.linkWave && <SliderRow id="link-speed" label="Wave speed" value={settings.linkSpeed} min={60} max={800} step={20} unit=" px/s" onChange={settings.setLinkSpeed} />}
+      </>}
     </div>
   </div>;
 }

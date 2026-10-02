@@ -65,16 +65,18 @@ export function PlaygroundDemo({ settings, dark, setDark }: { settings: FieldSet
   React.useEffect(() => { controller.refreshTheme(); }, [accent, controller, dark]);
   /* The three surfaces in a row, label to note to the round one, routed by
      id so the links follow their surfaces. With the wave on they are one
-     sequence: a single wave runs the whole row, through the note. */
+     sequence: a single wave runs the whole row, through the note. Only when
+     the visitor switches them on (`linkRow`). */
   React.useEffect(() => {
+    if (!settings.linkRow) { controller.setLinks(null); return; }
     const motion = settings.linkWave ? "loop" : "still";
-    const wave = { motion, speed: settings.linkSpeed, strength: settings.linkStrength, sequence: "row" } as const;
+    const wave = { motion, speed: settings.linkSpeed, strength: settings.linkStrength, width: settings.linkWidth, sequence: "row" } as const;
     controller.setLinks([
       { from: "label", to: "note", ...wave },
       { from: "note", to: "swatch", ...wave },
     ]);
     return () => controller.setLinks(null);
-  }, [controller, settings.linkWave, settings.linkStrength, settings.linkSpeed]);
+  }, [controller, settings.linkRow, settings.linkWidth, settings.linkWave, settings.linkStrength, settings.linkSpeed]);
 
   /* A turn kept in (-180, 180], so a card spun twice reads -6 and not 714. */
   const wrap = (deg: number) => { const d = ((deg % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
@@ -218,7 +220,7 @@ export function PlaygroundDemo({ settings, dark, setDark }: { settings: FieldSet
   });
 
   return <FieldWorkspace
-    settings={settings} dark={dark} setDark={setDark} onReset={resetLayout} sheetTitle="Surface Field controls"
+    settings={settings} dark={dark} setDark={setDark} onReset={resetLayout} links="optional" sheetTitle="Surface Field controls"
     intro="Click a surface to select it, then drag, resize or turn it. Tune the light and texture here."
   >
     <div className="canvas" ref={canvasRef} onPointerDown={onCanvasDown}>

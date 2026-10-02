@@ -88,8 +88,8 @@ const sameRects = (a: readonly SceneRect[], b: readonly SceneRect[]) =>
   a.length === b.length && a.every((r, i) => r.id === b[i].id && r.left === b[i].left &&
     r.top === b[i].top && r.right === b[i].right && r.bottom === b[i].bottom && r.radius === b[i].radius);
 
-function FieldBridge({ controller, root, wave, strength, speed }: {
-  controller: SurfaceFieldController; root: React.RefObject<HTMLDivElement | null>; wave: boolean; strength: number; speed: number;
+function FieldBridge({ controller, root, wave, strength, speed, width }: {
+  controller: SurfaceFieldController; root: React.RefObject<HTMLDivElement | null>; wave: boolean; strength: number; speed: number; width: number;
 }) {
   const store = useStoreApi();
   React.useEffect(() => {
@@ -182,7 +182,7 @@ function FieldBridge({ controller, root, wave, strength, speed }: {
           const p = path.getPointAtLength(length * i / count).matrixTransform(matrix);
           return { x: p.x - box.left, y: p.y - box.top };
         });
-        links.push({ points, motion: wave && edge.classList.contains("animated") ? "loop" : "still", speed, strength });
+        links.push({ points, motion: wave && edge.classList.contains("animated") ? "loop" : "still", speed, strength, width });
       }
       controller.setLinks(links);
     };
@@ -197,7 +197,7 @@ function FieldBridge({ controller, root, wave, strength, speed }: {
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
     };
-  }, [controller, root, store, wave, strength, speed]);
+  }, [controller, root, store, wave, strength, speed, width]);
   React.useEffect(() => () => controller.setScene(null), [controller]);
   return null;
 }
@@ -212,7 +212,7 @@ const fitOptions = (): FitViewOptions => ({
     : { top: "84px", right: "28px", bottom: "96px", left: "28px" },
 });
 
-function FlowCanvas({ config, accent, dark, linkWave, linkStrength, linkSpeed }: { config: Config; accent: string | null; dark: boolean; linkWave: boolean; linkStrength: number; linkSpeed: number }) {
+function FlowCanvas({ config, accent, dark, linkWave, linkStrength, linkSpeed, linkWidth }: { config: Config; accent: string | null; dark: boolean; linkWave: boolean; linkStrength: number; linkSpeed: number; linkWidth: number }) {
   const fitViewOptions = React.useMemo(fitOptions, []);
   const root = React.useRef<HTMLDivElement>(null);
   const controller = React.useMemo(createSurfaceFieldController, []);
@@ -245,16 +245,16 @@ function FlowCanvas({ config, accent, dark, linkWave, linkStrength, linkSpeed }:
       <Controls position="bottom-center" orientation="horizontal" showInteractive={false} fitViewOptions={fitViewOptions} />
       <MiniMap position="top-right" pannable zoomable nodeBorderRadius={10} style={{ width: 172, height: 112 }} />
     </ReactFlow>
-    <FieldBridge controller={controller} root={root} wave={linkWave} strength={linkStrength} speed={linkSpeed} />
+    <FieldBridge controller={controller} root={root} wave={linkWave} strength={linkStrength} speed={linkSpeed} width={linkWidth} />
   </div>;
 }
 
 /** React Flow on the field, tuned by the same sidebar as the playground. The integration itself is `examples/react-flow/` in the repository. */
 export function FlowDemo({ settings, dark, setDark }: { settings: FieldSettings; dark: boolean; setDark: (value: boolean) => void }) {
   return <FieldWorkspace
-    settings={settings} dark={dark} setDark={setDark} sheetTitle="React Flow demo controls"
+    settings={settings} dark={dark} setDark={setDark} links="always" sheetTitle="React Flow demo controls"
     intro="Surface Field as React Flow's background. Pan, zoom, move or resize a card: the grid follows the canvas and every card carves its clearing."
   >
-    <ReactFlowProvider><FlowCanvas config={settings.config} accent={settings.accent} dark={dark} linkWave={settings.linkWave} linkStrength={settings.linkStrength} linkSpeed={settings.linkSpeed} /></ReactFlowProvider>
+    <ReactFlowProvider><FlowCanvas config={settings.config} accent={settings.accent} dark={dark} linkWave={settings.linkWave} linkStrength={settings.linkStrength} linkSpeed={settings.linkSpeed} linkWidth={settings.linkWidth} /></ReactFlowProvider>
   </FieldWorkspace>;
 }
